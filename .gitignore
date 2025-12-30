@@ -1,0 +1,5 @@
+# Local VS Code settings
+.vscode/
+
+# Local devcontainer configuration
+.devcontainer/

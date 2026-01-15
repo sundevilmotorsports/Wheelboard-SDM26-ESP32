@@ -20,6 +20,7 @@ i2c_master_dev_handle_t MLX90642 = NULL;
 #define I2C_SCL 47
 #define I2C_SDA 48
 #define MLX_ADDR 0x33
+#define MLX_DATA_SIZE 769
 
 void initializeCan() {
     twai_onchip_node_config_t node_config = {
@@ -115,4 +116,21 @@ void app_main(void) {
 
     initializeMLX90642();
     ESP_LOGI(TAG, "MLX init");
+
+    for (;;) {
+        uint16_t data[MLX_DATA_SIZE];
+        MLX_Read(0x342C, MLX_DATA_SIZE, data);
+
+        size_t len = sizeof data / sizeof data[0];
+        ESP_LOGI(TAG, "Data length: %d", len);
+
+        uint16_t total = 0;
+        for (size_t i = 0; i < len; i++) {
+            total += data[i];
+        }
+
+        ESP_LOGI(TAG, "Average temp: %d", total / len);
+
+        vTaskDelay(pdMS_TO_TICKS(500));
+    }
 }

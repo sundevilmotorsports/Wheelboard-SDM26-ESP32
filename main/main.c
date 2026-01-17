@@ -17,8 +17,8 @@ twai_node_handle_t CAN1 = NULL;
 #define CAN1_TX GPIO_NUM_18
 #define CAN1_RX GPIO_NUM_17
 
-#define I2C_SCL GPIO_NUM_22
-#define I2C_SDA GPIO_NUM_21
+#define I2C_SCL GPIO_NUM_5
+#define I2C_SDA GPIO_NUM_4
 
 #define MLX_TOTAL_PIXELS 768
 #define MLX_WIDTH 24
@@ -26,6 +26,12 @@ twai_node_handle_t CAN1 = NULL;
 
 static i2c_master_bus_handle_t i2c_bus = NULL;
 static i2c_master_dev_handle_t mlx_dev = NULL;
+
+const char* COLOR_COLD = "\x1b[44m";   // Blue background (cold)
+const char* COLOR_MID = "\x1b[42m";    // Green background (medium)
+const char* COLOR_HOT = "\x1b[41m";    // Red background (hot)
+const char* COLOR_RESET = "\x1b[0m";   // Reset colors
+
 
 int MLX90642_I2CRead(uint8_t slaveAddr, uint16_t startAddress, uint16_t nMemAddressRead, uint16_t *rData) {
     if (mlx_dev == NULL) return -1;
@@ -108,35 +114,31 @@ static void print_thermal_image(uint16_t *image_data) {
         if (image_data[i] > max_val) max_val = image_data[i];
     }
 
-    // Gradient characters (coldest to hottest)
-    const char gradient[] = " .-:=+*#%@";
-    int gradient_len = sizeof(gradient) - 1;
-
-    printf("\n╔");
-    for (int x = 0; x < MLX_WIDTH; x++) printf("═");
-    printf("╗\n");
-
     for (int y = 0; y < MLX_HEIGHT; y++) {
-        printf("║");
         for (int x = 0; x < MLX_WIDTH; x++) {
             int idx = y * MLX_WIDTH + x;
 
-            int scaled = 0;
+            int color_idx = 0;
             if (max_val > min_val) {
-                scaled = ((image_data[idx] - min_val) * gradient_len) / (max_val - min_val);
-                if (scaled >= gradient_len) scaled = gradient_len - 1;
+                color_idx = ((image_data[idx] - min_val) * 2) / (max_val - min_val);
+                if (color_idx > 2) color_idx = 2;
             }
 
-            printf("%c", gradient[scaled]);
+            const char* color;
+            switch (color_idx) {
+                case 0: color = COLOR_COLD; break;
+                case 1: color = COLOR_MID; break;
+                default: color = COLOR_HOT; break;
+            }
+
+            printf("%s  %s", color, COLOR_RESET);
         }
-        printf("║\n");
+        printf("\n");
     }
 
-    printf("╚");
-    for (int x = 0; x < MLX_WIDTH; x++) printf("═");
-    printf("╝\n");
+    printf("\n");
 
-    ESP_LOGI(TAG, "Temp range: %u - %u (raw values)", min_val, max_val);
+    ESP_LOGI(TAG, "Temp range: %d - %d (raw values)", min_val, max_val);
 }
 
 void app_main(void) {
@@ -150,7 +152,7 @@ void app_main(void) {
         .scl_io_num = I2C_SCL,
         .sda_io_num = I2C_SDA,
         .glitch_ignore_cnt = 7,
-        .flags.enable_internal_pullup = true,
+        .flags.enable_internal_pullup = false,
     };
     ESP_ERROR_CHECK(i2c_new_master_bus(&i2c_mst_config, &i2c_bus));
 

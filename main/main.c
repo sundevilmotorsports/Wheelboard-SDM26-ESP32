@@ -32,6 +32,7 @@ const char* COLOR_MID = "\x1b[42m";    // Green background (medium)
 const char* COLOR_HOT = "\x1b[41m";    // Red background (hot)
 const char* COLOR_RESET = "\x1b[0m";   // Reset colors
 
+static QueueHandle_t he_evt_queue = NULL;
 
 int MLX90642_I2CRead(uint8_t slaveAddr, uint16_t startAddress, uint16_t nMemAddressRead, uint16_t *rData) {
     if (mlx_dev == NULL) return -1;
@@ -105,6 +106,19 @@ void initializeCan() {
     ESP_ERROR_CHECK(twai_node_enable(CAN1));
 }
 
+void initializeI2C() {
+    i2c_master_bus_config_t i2c_mst_config = {
+        .clk_source = I2C_CLK_SRC_DEFAULT,
+        .i2c_port = I2C_NUM_0,
+        .scl_io_num = I2C_SCL,
+        .sda_io_num = I2C_SDA,
+        .glitch_ignore_cnt = 7,
+        .flags.enable_internal_pullup = false,
+    };
+
+    ESP_ERROR_CHECK(i2c_new_master_bus(&i2c_mst_config, &i2c_bus));
+}
+
 static void print_thermal_image(uint16_t *image_data) {
     uint16_t min_val = 0xFFFF;
     uint16_t max_val = 0;
@@ -141,21 +155,7 @@ static void print_thermal_image(uint16_t *image_data) {
     ESP_LOGI(TAG, "Temp range: %d - %d (raw values)", min_val, max_val);
 }
 
-void app_main(void) {
-    ESP_LOGI(TAG, "Starting Wheelboard");
-
-    initializeCan();
-
-    i2c_master_bus_config_t i2c_mst_config = {
-        .clk_source = I2C_CLK_SRC_DEFAULT,
-        .i2c_port = I2C_NUM_0,
-        .scl_io_num = I2C_SCL,
-        .sda_io_num = I2C_SDA,
-        .glitch_ignore_cnt = 7,
-        .flags.enable_internal_pullup = false,
-    };
-    ESP_ERROR_CHECK(i2c_new_master_bus(&i2c_mst_config, &i2c_bus));
-
+void MLX90642_Initialize() {
     i2c_device_config_t mlx_cfg = {
         .dev_addr_length = I2C_ADDR_BIT_LEN_7,
         .device_address = SA_90642_DEFAULT,
@@ -185,7 +185,6 @@ void app_main(void) {
         vTaskDelay(pdMS_TO_TICKS(20));
     }
 
-    // Manual initialization (more reliable than MLX90642_Init)
     int refresh_rate = MLX90642_GetRefreshRate(SA_90642_DEFAULT);
     if (refresh_rate < 0) {
         ESP_LOGE(TAG, "Failed to get refresh rate");
@@ -210,14 +209,30 @@ void app_main(void) {
     }
 
     ESP_LOGI(TAG, "MLX90642 initialized (refresh: %dms)", refresh_time);
+}
 
+static void gpio_isr_handler(void* arg) {
+    uint32_t gpio_num = (uint32_t) arg;
+    xQueueSendFromISR(he_evt_queue, &gpio_num, NULL);
+}
+
+static void he_task(void* arg) {
+    uint32_t io_num;
+    for (;;) {
+        if (xQueueReceive(he_evt_queue, &io_num, portMAX_DELAY)) {
+            printf("GPIO[%"PRIu32"] trigger\n", io_num);
+        }
+    }
+}
+
+static void mlx_task(void* arg) {
     uint16_t *data = malloc(MLX_TOTAL_PIXELS * sizeof(uint16_t));
     if (data == NULL) {
         ESP_LOGE(TAG, "Failed to allocate memory");
         return;
     }
 
-    while (1) {
+    for (;;) {
         int ready = MLX90642_NO;
         for (int timeout = 0; timeout < 100 && ready == MLX90642_NO; timeout++) {
             ready = MLX90642_IsDataReady(SA_90642_DEFAULT);
@@ -238,4 +253,35 @@ void app_main(void) {
     }
 
     free(data);
+}
+
+void app_main(void) {
+    ESP_LOGI(TAG, "Starting Wheelboard");
+
+    initializeCan();
+
+    xTaskCreate(mlx_task, "mlx_task", 2048, NULL, 10, NULL);
+
+    gpio_config_t io_conf = {
+        // .intr_type = GPIO_INTR_POSEDGE,
+        .intr_type = GPIO_INTR_DISABLE,
+        .mode = GPIO_MODE_INPUT,
+        .pin_bit_mask = (1ULL << GPIO_NUM_6),
+        .pull_down_en = GPIO_PULLDOWN_DISABLE,
+        .pull_up_en = GPIO_PULLUP_DISABLE
+    };
+    gpio_config(&io_conf);
+
+    he_evt_queue = xQueueCreate(10, sizeof(uint32_t));
+    xTaskCreate(he_task, "he_task", 2048, NULL, 10, NULL);
+
+    gpio_install_isr_service(0);
+    gpio_isr_handler_add(GPIO_NUM_6, gpio_isr_handler, (void*) GPIO_NUM_6);
+
+    ESP_LOGI(TAG, "Everything initalized\n");
+
+    for (;;) {
+        vTaskDelay(pdMS_TO_TICKS(1000));
+        ESP_LOGI(TAG, "Level: %d\n", gpio_get_level(GPIO_NUM_6));
+    }
 }

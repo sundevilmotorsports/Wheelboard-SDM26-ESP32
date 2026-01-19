@@ -3,6 +3,7 @@
 #include "freertos/task.h"
 #include "driver/gpio.h"
 #include "esp_log.h"
+#include "esp_timer.h"
 #include "esp_twai.h"
 #include "esp_twai_onchip.h"
 #include "esp_twai_types.h"
@@ -218,9 +219,28 @@ static void gpio_isr_handler(void* arg) {
 
 static void he_task(void* arg) {
     uint32_t io_num;
+    uint32_t last_time = 0;
+    uint32_t time_diff = 0;
+    const uint32_t MIN_INTERVAL_MS = 10;  // Ignore triggers faster than 10ms
+
     for (;;) {
         if (xQueueReceive(he_evt_queue, &io_num, portMAX_DELAY)) {
-            printf("GPIO[%"PRIu32"] trigger\n", io_num);
+            uint32_t current_time = esp_timer_get_time() / 1000;
+
+            if (last_time > 0) {
+                time_diff = current_time - last_time;
+
+                if (time_diff > MIN_INTERVAL_MS) {
+                    uint32_t rpm = (60000) / (time_diff * 20);
+                    ESP_LOGI(TAG, "Magnet pass - RPM: %lu (interval: %lu ms)", rpm, time_diff);
+                }
+            }
+
+            last_time = current_time;
+
+            vTaskDelay(pdMS_TO_TICKS(5));
+
+            while (xQueueReceive(he_evt_queue, &io_num, 0)) { }
         }
     }
 }
@@ -259,12 +279,10 @@ void app_main(void) {
     ESP_LOGI(TAG, "Starting Wheelboard");
 
     initializeCan();
-
     xTaskCreate(mlx_task, "mlx_task", 2048, NULL, 10, NULL);
 
     gpio_config_t io_conf = {
-        // .intr_type = GPIO_INTR_POSEDGE,
-        .intr_type = GPIO_INTR_DISABLE,
+        .intr_type = GPIO_INTR_NEGEDGE,
         .mode = GPIO_MODE_INPUT,
         .pin_bit_mask = (1ULL << GPIO_NUM_6),
         .pull_down_en = GPIO_PULLDOWN_DISABLE,
@@ -273,15 +291,14 @@ void app_main(void) {
     gpio_config(&io_conf);
 
     he_evt_queue = xQueueCreate(10, sizeof(uint32_t));
-    xTaskCreate(he_task, "he_task", 2048, NULL, 10, NULL);
+    xTaskCreate(he_task, "he_task", 4096, NULL, 10, NULL);
 
     gpio_install_isr_service(0);
     gpio_isr_handler_add(GPIO_NUM_6, gpio_isr_handler, (void*) GPIO_NUM_6);
 
-    ESP_LOGI(TAG, "Everything initalized\n");
+    ESP_LOGI(TAG, "Everything initialized\n");
 
     for (;;) {
         vTaskDelay(pdMS_TO_TICKS(1000));
-        ESP_LOGI(TAG, "Level: %d\n", gpio_get_level(GPIO_NUM_6));
     }
 }

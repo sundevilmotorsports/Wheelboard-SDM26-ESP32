@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <string.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "driver/gpio.h"
@@ -18,6 +19,10 @@ twai_node_handle_t CAN1 = NULL;
 #define CAN1_TX GPIO_NUM_18
 #define CAN1_RX GPIO_NUM_17
 
+// twai_node_handle_t CAN2 = NULL;
+// #define CAN1_TX GPIO_NUM_18
+// #define CAN1_RX GPIO_NUM_17
+
 #define I2C_SCL GPIO_NUM_5
 #define I2C_SDA GPIO_NUM_4
 
@@ -34,6 +39,10 @@ const char* COLOR_HOT = "\x1b[41m";    // Red background (hot)
 const char* COLOR_RESET = "\x1b[0m";   // Reset colors
 
 static QueueHandle_t he_evt_queue = NULL;
+
+static uint32_t g_wheel_speed = 0;
+static int16_t g_obj_temp = 0;
+static int16_t g_amb_temp = 0;
 
 int MLX90642_I2CRead(uint8_t slaveAddr, uint16_t startAddress, uint16_t nMemAddressRead, uint16_t *rData) {
     if (mlx_dev == NULL) return -1;
@@ -103,8 +112,49 @@ void initializeCan() {
         .tx_queue_depth = 5,
     };
 
-    ESP_ERROR_CHECK(twai_new_node_onchip(&node_config, &CAN1));
-    ESP_ERROR_CHECK(twai_node_enable(CAN1));
+    esp_err_t ret = twai_new_node_onchip(&node_config, &CAN1);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to create CAN node: %s", esp_err_to_name(ret));
+        return;
+    }
+
+    ret = twai_node_enable(CAN1);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to enable CAN node: %s", esp_err_to_name(ret));
+        return;
+    }
+
+    ESP_LOGI(TAG, "CAN initialized on TX=%d, RX=%d @ 200kbps", CAN1_TX, CAN1_RX);
+}
+
+void sendCanMessage() {
+    uint8_t tx_buffer[8];
+
+    tx_buffer[0] = (g_wheel_speed >> 8) & 0xFF;
+    tx_buffer[1] = g_wheel_speed & 0xFF;
+
+    tx_buffer[2] = (g_obj_temp >> 8) & 0xFF;
+    tx_buffer[3] = g_obj_temp & 0xFF;
+
+    tx_buffer[4] = (g_amb_temp >> 8) & 0xFF;
+    tx_buffer[5] = g_amb_temp & 0xFF;
+
+    twai_frame_t tx_msg = {
+        .header.id = 0x365,
+        .header.ide = false,
+        .header.rtr = false,
+        .header.dlc = 6,
+        .buffer = tx_buffer,
+        .buffer_len = 6,
+    };
+
+    esp_err_t ret = twai_node_transmit(CAN1, &tx_msg, pdMS_TO_TICKS(100));
+    if (ret == ESP_OK) {
+        ESP_LOGI(TAG, "CAN TX: RPM=%u, Obj=%d, Amb=%d",
+                 g_wheel_speed, g_obj_temp, g_amb_temp);
+    } else {
+        ESP_LOGW(TAG, "Failed to send CAN message: %s", esp_err_to_name(ret));
+    }
 }
 
 void initializeI2C() {
@@ -118,42 +168,6 @@ void initializeI2C() {
     };
 
     ESP_ERROR_CHECK(i2c_new_master_bus(&i2c_mst_config, &i2c_bus));
-}
-
-static void print_thermal_image(uint16_t *image_data) {
-    uint16_t min_val = 0xFFFF;
-    uint16_t max_val = 0;
-
-    for (int i = 0; i < MLX_TOTAL_PIXELS; i++) {
-        if (image_data[i] < min_val) min_val = image_data[i];
-        if (image_data[i] > max_val) max_val = image_data[i];
-    }
-
-    for (int y = 0; y < MLX_HEIGHT; y++) {
-        for (int x = 0; x < MLX_WIDTH; x++) {
-            int idx = y * MLX_WIDTH + x;
-
-            int color_idx = 0;
-            if (max_val > min_val) {
-                color_idx = ((image_data[idx] - min_val) * 2) / (max_val - min_val);
-                if (color_idx > 2) color_idx = 2;
-            }
-
-            const char* color;
-            switch (color_idx) {
-                case 0: color = COLOR_COLD; break;
-                case 1: color = COLOR_MID; break;
-                default: color = COLOR_HOT; break;
-            }
-
-            printf("%s  %s", color, COLOR_RESET);
-        }
-        printf("\n");
-    }
-
-    printf("\n");
-
-    ESP_LOGI(TAG, "Temp range: %d - %d (raw values)", min_val, max_val);
 }
 
 void MLX90642_Initialize() {
@@ -231,7 +245,9 @@ static void he_task(void* arg) {
                 time_diff = current_time - last_time;
 
                 if (time_diff > MIN_INTERVAL_MS) {
+                    // RPM = (60000 ms/min) / (time_diff_ms * num_magnets)
                     uint32_t rpm = (60000) / (time_diff * 20);
+                    g_wheel_speed = rpm;
                     ESP_LOGI(TAG, "Magnet pass - RPM: %lu (interval: %lu ms)", rpm, time_diff);
                 }
             }
@@ -262,7 +278,8 @@ static void mlx_task(void* arg) {
 
         if (ready == MLX90642_YES) {
             if (MLX90642_GetImage(SA_90642_DEFAULT, data) == 0) {
-                print_thermal_image(data);
+                g_amb_temp = 1;
+                g_obj_temp = 1;
             }
 
             MLX90642_ClearDataReady(SA_90642_DEFAULT);
@@ -275,11 +292,23 @@ static void mlx_task(void* arg) {
     free(data);
 }
 
+static void can_tx_task(void* arg) {
+    for (;;) {
+        sendCanMessage();
+        vTaskDelay(pdMS_TO_TICKS(40));
+    }
+}
+
 void app_main(void) {
     ESP_LOGI(TAG, "Starting Wheelboard");
 
     initializeCan();
-    xTaskCreate(mlx_task, "mlx_task", 2048, NULL, 10, NULL);
+    initializeI2C();
+
+    // MLX90642_Initialize();
+
+    xTaskCreate(mlx_task, "mlx_task", 4096, NULL, 10, NULL);
+    xTaskCreate(can_tx_task, "can_tx_task", 4096, NULL, 9, NULL);
 
     gpio_config_t io_conf = {
         .intr_type = GPIO_INTR_NEGEDGE,

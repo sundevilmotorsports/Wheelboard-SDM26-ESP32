@@ -12,6 +12,7 @@
 #include "driver/i2c_master.h"
 #include "MLX90642.h"
 #include "MLX90642_depends.h"
+#include "driver/spi_master.h"
 
 static const char *TAG = "Wheelboard";
 
@@ -19,9 +20,15 @@ twai_node_handle_t CAN1 = NULL;
 #define CAN1_TX GPIO_NUM_18
 #define CAN1_RX GPIO_NUM_17
 
-// twai_node_handle_t CAN2 = NULL;
-// #define CAN1_TX GPIO_NUM_18
-// #define CAN1_RX GPIO_NUM_17
+spi_device_handle_t CAN2;
+
+#define CAN2_MISO GPIO_NUM_20
+#define CAN2_MOSI GPIO_NUM_9
+#define CAN2_SCK GPIO_NUM_10
+#define CAN2_CS GPIO_NUM_19
+#define CAN2_INT GPIO_NUM_11
+#define CAN2_INT0 GPIO_NUM_12
+#define CAN2_INT1 GPIO_NUM_13
 
 #define I2C_SCL GPIO_NUM_5
 #define I2C_SDA GPIO_NUM_4
@@ -32,11 +39,6 @@ twai_node_handle_t CAN1 = NULL;
 
 static i2c_master_bus_handle_t i2c_bus = NULL;
 static i2c_master_dev_handle_t mlx_dev = NULL;
-
-const char* COLOR_COLD = "\x1b[44m";   // Blue background (cold)
-const char* COLOR_MID = "\x1b[42m";    // Green background (medium)
-const char* COLOR_HOT = "\x1b[41m";    // Red background (hot)
-const char* COLOR_RESET = "\x1b[0m";   // Reset colors
 
 static QueueHandle_t he_evt_queue = NULL;
 
@@ -102,6 +104,27 @@ int MLX90642_I2CCmd(uint8_t slaveAddr, uint16_t i2c_cmd) {
     buffer[3] = i2c_cmd & 0xFF;               // Command LSB
 
     return MLX90642_I2CWrite(slaveAddr, buffer, 4);
+}
+
+void initializeSPI() {
+    // TODO: Interrupts
+    spi_bus_config_t cfg = {
+        .mosi_io_num = CAN2_MOSI,
+        .miso_io_num = CAN2_MISO,
+        .sclk_io_num = CAN2_SCK,
+    };
+
+    spi_bus_initialize(SPI2_HOST, &cfg, SPI_DMA_DISABLED);
+
+    vTaskDelay(pdMS_TO_TICKS(20));
+
+    spi_device_interface_config_t dev_config = {
+        .command_bits = 4,
+        .address_bits = 12,
+        .mode = 0,
+    };
+
+    spi_bus_add_device(SPI2_HOST, &dev_config, &CAN2);
 }
 
 void initializeCan() {
@@ -303,9 +326,10 @@ void app_main(void) {
     ESP_LOGI(TAG, "Starting Wheelboard");
 
     initializeCan();
+    initializeSPI();
     initializeI2C();
 
-    // MLX90642_Initialize();
+    MLX90642_Initialize();
 
     xTaskCreate(mlx_task, "mlx_task", 4096, NULL, 10, NULL);
     xTaskCreate(can_tx_task, "can_tx_task", 4096, NULL, 9, NULL);

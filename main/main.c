@@ -114,17 +114,17 @@ void initializeSPI() {
         .sclk_io_num = CAN2_SCK,
     };
 
-    spi_bus_initialize(SPI2_HOST, &cfg, SPI_DMA_DISABLED);
-
-    vTaskDelay(pdMS_TO_TICKS(20));
+    ESP_ERROR_CHECK(spi_bus_initialize(SPI2_HOST, &cfg, SPI_DMA_DISABLED));
 
     spi_device_interface_config_t dev_config = {
+        .clock_speed_hz = 10000000,
         .command_bits = 4,
         .address_bits = 12,
         .mode = 0,
+        .queue_size = 5,
     };
 
-    spi_bus_add_device(SPI2_HOST, &dev_config, &CAN2);
+    ESP_ERROR_CHECK(spi_bus_add_device(SPI2_HOST, &dev_config, &CAN2));
 }
 
 void initializeCan() {
@@ -324,30 +324,31 @@ static void can_tx_task(void* arg) {
 
 void app_main(void) {
     ESP_LOGI(TAG, "Starting Wheelboard");
+    vTaskDelay(pdMS_TO_TICKS(100));
 
-    initializeCan();
+    // initializeCan();
     initializeSPI();
-    initializeI2C();
+    // initializeI2C();
 
-    MLX90642_Initialize();
+    // MLX90642_Initialize();
 
-    xTaskCreate(mlx_task, "mlx_task", 4096, NULL, 10, NULL);
-    xTaskCreate(can_tx_task, "can_tx_task", 4096, NULL, 9, NULL);
-
-    gpio_config_t io_conf = {
-        .intr_type = GPIO_INTR_NEGEDGE,
-        .mode = GPIO_MODE_INPUT,
-        .pin_bit_mask = (1ULL << GPIO_NUM_6),
-        .pull_down_en = GPIO_PULLDOWN_DISABLE,
-        .pull_up_en = GPIO_PULLUP_DISABLE
-    };
-    gpio_config(&io_conf);
-
-    he_evt_queue = xQueueCreate(10, sizeof(uint32_t));
-    xTaskCreate(he_task, "he_task", 4096, NULL, 10, NULL);
-
-    gpio_install_isr_service(0);
-    gpio_isr_handler_add(GPIO_NUM_6, gpio_isr_handler, (void*) GPIO_NUM_6);
+    // xTaskCreate(mlx_task, "mlx_task", 4096, NULL, 10, NULL);
+    // xTaskCreate(can_tx_task, "can_tx_task", 4096, NULL, 9, NULL);
+    //
+    // gpio_config_t io_conf = {
+    //     .intr_type = GPIO_INTR_NEGEDGE,
+    //     .mode = GPIO_MODE_INPUT,
+    //     .pin_bit_mask = (1ULL << GPIO_NUM_6),
+    //     .pull_down_en = GPIO_PULLDOWN_DISABLE,
+    //     .pull_up_en = GPIO_PULLUP_DISABLE
+    // };
+    // gpio_config(&io_conf);
+    //
+    // he_evt_queue = xQueueCreate(10, sizeof(uint32_t));
+    // xTaskCreate(he_task, "he_task", 4096, NULL, 10, NULL);
+    //
+    // gpio_install_isr_service(0);
+    // gpio_isr_handler_add(GPIO_NUM_6, gpio_isr_handler, (void*) GPIO_NUM_6);
 
     ESP_LOGI(TAG, "Everything initialized\n");
 

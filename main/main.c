@@ -1,18 +1,19 @@
-#include <stdio.h>
-#include <string.h>
-#include "freertos/FreeRTOS.h"
-#include "freertos/task.h"
+#include "MLX90642.h"
+#include "MLX90642_depends.h"
 #include "driver/gpio.h"
+#include "driver/i2c_master.h"
+#include "driver/spi_master.h"
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "esp_twai.h"
 #include "esp_twai_onchip.h"
 #include "esp_twai_types.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "mcp2518fd.h"
 #include "sdkconfig.h"
-#include "driver/i2c_master.h"
-#include "MLX90642.h"
-#include "MLX90642_depends.h"
-#include "driver/spi_master.h"
+#include <stdio.h>
+#include <string.h>
 
 static const char *TAG = "Wheelboard";
 
@@ -46,8 +47,10 @@ static uint32_t g_wheel_speed = 0;
 static int16_t g_obj_temp = 0;
 static int16_t g_amb_temp = 0;
 
-int MLX90642_I2CRead(uint8_t slaveAddr, uint16_t startAddress, uint16_t nMemAddressRead, uint16_t *rData) {
-    if (mlx_dev == NULL) return -1;
+int MLX90642_I2CRead(uint8_t slaveAddr, uint16_t startAddress,
+                     uint16_t nMemAddressRead, uint16_t *rData) {
+    if (mlx_dev == NULL)
+        return -1;
 
     uint8_t addr_buf[2];
     addr_buf[0] = (startAddress >> 8) & 0xFF;
@@ -55,10 +58,11 @@ int MLX90642_I2CRead(uint8_t slaveAddr, uint16_t startAddress, uint16_t nMemAddr
 
     size_t read_size = nMemAddressRead * 2;
     uint8_t *read_buf = malloc(read_size);
-    if (read_buf == NULL) return -1;
+    if (read_buf == NULL)
+        return -1;
 
-    esp_err_t ret = i2c_master_transmit_receive(mlx_dev, addr_buf, sizeof(addr_buf),
-                                                 read_buf, read_size, 1000);
+    esp_err_t ret = i2c_master_transmit_receive(
+        mlx_dev, addr_buf, sizeof(addr_buf), read_buf, read_size, 1000);
     if (ret != ESP_OK) {
         free(read_buf);
         return -1;
@@ -74,34 +78,33 @@ int MLX90642_I2CRead(uint8_t slaveAddr, uint16_t startAddress, uint16_t nMemAddr
 }
 
 int MLX90642_I2CWrite(uint8_t slaveAddr, uint8_t *buffer, uint8_t bytesNum) {
-    if (mlx_dev == NULL) return -1;
+    if (mlx_dev == NULL)
+        return -1;
 
     esp_err_t ret = i2c_master_transmit(mlx_dev, buffer, bytesNum, 1000);
     return (ret == ESP_OK) ? 0 : -1;
 }
 
-void MLX90642_Wait_ms(uint16_t time_ms) {
-    vTaskDelay(pdMS_TO_TICKS(time_ms));
-}
+void MLX90642_Wait_ms(uint16_t time_ms) { vTaskDelay(pdMS_TO_TICKS(time_ms)); }
 
 int MLX90642_Config(uint8_t slaveAddr, uint16_t writeAddress, uint16_t wData) {
     uint8_t buffer[6];
-    buffer[0] = (writeAddress >> 8) & 0xFF;   // Address MSB
-    buffer[1] = writeAddress & 0xFF;          // Address LSB
-    buffer[2] = 0x00;                         // Padding MSB
-    buffer[3] = 0x00;                         // Padding LSB
-    buffer[4] = (wData >> 8) & 0xFF;          // Data MSB
-    buffer[5] = wData & 0xFF;                 // Data LSB
+    buffer[0] = (writeAddress >> 8) & 0xFF; // Address MSB
+    buffer[1] = writeAddress & 0xFF; // Address LSB
+    buffer[2] = 0x00; // Padding MSB
+    buffer[3] = 0x00; // Padding LSB
+    buffer[4] = (wData >> 8) & 0xFF; // Data MSB
+    buffer[5] = wData & 0xFF; // Data LSB
 
     return MLX90642_I2CWrite(slaveAddr, buffer, 6);
 }
 
 int MLX90642_I2CCmd(uint8_t slaveAddr, uint16_t i2c_cmd) {
     uint8_t buffer[4];
-    buffer[0] = 0x01;                         // Command address MSB
-    buffer[1] = 0x80;                         // Command address LSB (0x0180)
-    buffer[2] = (i2c_cmd >> 8) & 0xFF;        // Command MSB
-    buffer[3] = i2c_cmd & 0xFF;               // Command LSB
+    buffer[0] = 0x01; // Command address MSB
+    buffer[1] = 0x80; // Command address LSB (0x0180)
+    buffer[2] = (i2c_cmd >> 8) & 0xFF; // Command MSB
+    buffer[3] = i2c_cmd & 0xFF; // Command LSB
 
     return MLX90642_I2CWrite(slaveAddr, buffer, 4);
 }
@@ -112,15 +115,16 @@ void initializeSPI() {
         .mosi_io_num = CAN2_MOSI,
         .miso_io_num = CAN2_MISO,
         .sclk_io_num = CAN2_SCK,
+        .quadwp_io_num = -1,
+        .quadhd_io_num = -1,
     };
 
     ESP_ERROR_CHECK(spi_bus_initialize(SPI2_HOST, &cfg, SPI_DMA_DISABLED));
 
     spi_device_interface_config_t dev_config = {
         .clock_speed_hz = 10000000,
-        .command_bits = 4,
-        .address_bits = 12,
         .mode = 0,
+        .spics_io_num = CAN2_CS,
         .queue_size = 5,
     };
 
@@ -150,7 +154,7 @@ void initializeCan() {
     ESP_LOGI(TAG, "CAN initialized on TX=%d, RX=%d @ 200kbps", CAN1_TX, CAN1_RX);
 }
 
-void sendCanMessage() {
+void sendCan1Message() {
     uint8_t tx_buffer[8];
 
     tx_buffer[0] = (g_wheel_speed >> 8) & 0xFF;
@@ -173,8 +177,8 @@ void sendCanMessage() {
 
     esp_err_t ret = twai_node_transmit(CAN1, &tx_msg, pdMS_TO_TICKS(100));
     if (ret == ESP_OK) {
-        ESP_LOGI(TAG, "CAN TX: RPM=%u, Obj=%d, Amb=%d",
-                 g_wheel_speed, g_obj_temp, g_amb_temp);
+        ESP_LOGI(TAG, "CAN TX: RPM=%u, Obj=%d, Amb=%d", g_wheel_speed, g_obj_temp,
+                 g_amb_temp);
     } else {
         ESP_LOGW(TAG, "Failed to send CAN message: %s", esp_err_to_name(ret));
     }
@@ -249,16 +253,16 @@ void MLX90642_Initialize() {
     ESP_LOGI(TAG, "MLX90642 initialized (refresh: %dms)", refresh_time);
 }
 
-static void gpio_isr_handler(void* arg) {
+static void gpio_isr_handler(void *arg) {
     uint32_t gpio_num = (uint32_t) arg;
     xQueueSendFromISR(he_evt_queue, &gpio_num, NULL);
 }
 
-static void he_task(void* arg) {
+static void he_task(void *arg) {
     uint32_t io_num;
     uint32_t last_time = 0;
     uint32_t time_diff = 0;
-    const uint32_t MIN_INTERVAL_MS = 10;  // Ignore triggers faster than 10ms
+    const uint32_t MIN_INTERVAL_MS = 10; // Ignore triggers faster than 10ms
 
     for (;;) {
         if (xQueueReceive(he_evt_queue, &io_num, portMAX_DELAY)) {
@@ -271,7 +275,8 @@ static void he_task(void* arg) {
                     // RPM = (60000 ms/min) / (time_diff_ms * num_magnets)
                     uint32_t rpm = (60000) / (time_diff * 20);
                     g_wheel_speed = rpm;
-                    ESP_LOGI(TAG, "Magnet pass - RPM: %lu (interval: %lu ms)", rpm, time_diff);
+                    ESP_LOGI(TAG, "Magnet pass - RPM: %lu (interval: %lu ms)", rpm,
+                             time_diff);
                 }
             }
 
@@ -279,12 +284,13 @@ static void he_task(void* arg) {
 
             vTaskDelay(pdMS_TO_TICKS(5));
 
-            while (xQueueReceive(he_evt_queue, &io_num, 0)) { }
+            while (xQueueReceive(he_evt_queue, &io_num, 0)) {
+            }
         }
     }
 }
 
-static void mlx_task(void* arg) {
+static void mlx_task(void *arg) {
     uint16_t *data = malloc(MLX_TOTAL_PIXELS * sizeof(uint16_t));
     if (data == NULL) {
         ESP_LOGE(TAG, "Failed to allocate memory");
@@ -295,8 +301,10 @@ static void mlx_task(void* arg) {
         int ready = MLX90642_NO;
         for (int timeout = 0; timeout < 100 && ready == MLX90642_NO; timeout++) {
             ready = MLX90642_IsDataReady(SA_90642_DEFAULT);
-            if (ready < 0) break;
-            if (ready == MLX90642_NO) vTaskDelay(pdMS_TO_TICKS(10));
+            if (ready < 0)
+                break;
+            if (ready == MLX90642_NO)
+                vTaskDelay(pdMS_TO_TICKS(10));
         }
 
         if (ready == MLX90642_YES) {
@@ -315,9 +323,9 @@ static void mlx_task(void* arg) {
     free(data);
 }
 
-static void can_tx_task(void* arg) {
+static void can_tx_task(void *arg) {
     for (;;) {
-        sendCanMessage();
+        sendCan1Message();
         vTaskDelay(pdMS_TO_TICKS(40));
     }
 }
@@ -326,29 +334,32 @@ void app_main(void) {
     ESP_LOGI(TAG, "Starting Wheelboard");
     vTaskDelay(pdMS_TO_TICKS(100));
 
-    // initializeCan();
+    initializeCan();
     initializeSPI();
-    // initializeI2C();
+    if (mcp_init(CAN2) != ESP_OK) {
+        ESP_LOGE(TAG, "CAN init failed!");
+    }
+    initializeI2C();
 
-    // MLX90642_Initialize();
+    MLX90642_Initialize();
 
-    // xTaskCreate(mlx_task, "mlx_task", 4096, NULL, 10, NULL);
-    // xTaskCreate(can_tx_task, "can_tx_task", 4096, NULL, 9, NULL);
-    //
-    // gpio_config_t io_conf = {
-    //     .intr_type = GPIO_INTR_NEGEDGE,
-    //     .mode = GPIO_MODE_INPUT,
-    //     .pin_bit_mask = (1ULL << GPIO_NUM_6),
-    //     .pull_down_en = GPIO_PULLDOWN_DISABLE,
-    //     .pull_up_en = GPIO_PULLUP_DISABLE
-    // };
-    // gpio_config(&io_conf);
-    //
-    // he_evt_queue = xQueueCreate(10, sizeof(uint32_t));
-    // xTaskCreate(he_task, "he_task", 4096, NULL, 10, NULL);
-    //
-    // gpio_install_isr_service(0);
-    // gpio_isr_handler_add(GPIO_NUM_6, gpio_isr_handler, (void*) GPIO_NUM_6);
+    xTaskCreate(mlx_task, "mlx_task", 4096, NULL, 10, NULL);
+    xTaskCreate(can_tx_task, "can_tx_task", 4096, NULL, 9, NULL);
+
+    gpio_config_t io_conf = {
+        .intr_type = GPIO_INTR_NEGEDGE,
+        .mode = GPIO_MODE_INPUT,
+        .pin_bit_mask = (1ULL << GPIO_NUM_6),
+        .pull_down_en = GPIO_PULLDOWN_DISABLE,
+        .pull_up_en = GPIO_PULLUP_DISABLE
+    };
+    gpio_config(&io_conf);
+
+    he_evt_queue = xQueueCreate(10, sizeof(uint32_t));
+    xTaskCreate(he_task, "he_task", 4096, NULL, 10, NULL);
+
+    gpio_install_isr_service(0);
+    gpio_isr_handler_add(GPIO_NUM_6, gpio_isr_handler, (void *) GPIO_NUM_6);
 
     ESP_LOGI(TAG, "Everything initialized\n");
 

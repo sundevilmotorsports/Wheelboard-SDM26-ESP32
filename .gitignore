@@ -3,3 +3,13 @@
 
 # Local devcontainer configuration
 .devcontainer/
+
+
+#Local build files
+build/
+
+managed_components/
+
+sdkconfig
+
+dependencies.lock

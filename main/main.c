@@ -18,8 +18,10 @@
 static const char *TAG = "Wheelboard";
 
 twai_node_handle_t CAN1 = NULL;
-#define CAN1_TX GPIO_NUM_18
-#define CAN1_RX GPIO_NUM_17
+#define CAN1_TX GPIO_NUM_17
+#define CAN1_RX GPIO_NUM_18
+#define CAN1_BPS 1000000
+
 
 spi_device_handle_t CAN2;
 
@@ -135,8 +137,9 @@ void initializeCan() {
     twai_onchip_node_config_t node_config = {
         .io_cfg.tx = CAN1_TX,
         .io_cfg.rx = CAN1_RX,
-        .bit_timing.bitrate = 200000,
+        .bit_timing.bitrate = CAN1_BPS,
         .tx_queue_depth = 5,
+        .flags.enable_self_test=1,
     };
 
     esp_err_t ret = twai_new_node_onchip(&node_config, &CAN1);
@@ -151,7 +154,7 @@ void initializeCan() {
         return;
     }
 
-    ESP_LOGI(TAG, "CAN initialized on TX=%d, RX=%d @ 200kbps", CAN1_TX, CAN1_RX);
+    ESP_LOGI(TAG, "CAN initialized on TX=%d, RX=%d @ 1Mbps", CAN1_TX, CAN1_RX);
 }
 
 void sendCan1Message() {
@@ -167,7 +170,7 @@ void sendCan1Message() {
     tx_buffer[5] = g_amb_temp & 0xFF;
 
     twai_frame_t tx_msg = {
-        .header.id = 0x365,
+        .header.id = 0x363,
         .header.ide = false,
         .header.rtr = false,
         .header.dlc = 6,
@@ -177,8 +180,8 @@ void sendCan1Message() {
 
     esp_err_t ret = twai_node_transmit(CAN1, &tx_msg, pdMS_TO_TICKS(100));
     if (ret == ESP_OK) {
-        ESP_LOGI(TAG, "CAN TX: RPM=%u, Obj=%d, Amb=%d", g_wheel_speed, g_obj_temp,
-                 g_amb_temp);
+        // ESP_LOGI(TAG, "CAN TX: RPM=%u, Obj=%d, Amb=%d", g_wheel_speed, g_obj_temp,
+        //          g_amb_temp);
     } else {
         ESP_LOGW(TAG, "Failed to send CAN message: %s", esp_err_to_name(ret));
     }
@@ -335,10 +338,10 @@ void app_main(void) {
     vTaskDelay(pdMS_TO_TICKS(100));
 
     initializeCan();
-    initializeSPI();
-    if (mcp_init(CAN2) != ESP_OK) {
-        ESP_LOGE(TAG, "CAN init failed!");
-    }
+    // initializeSPI();
+    // if (mcp_init(CAN2) != ESP_OK) {
+    //     ESP_LOGE(TAG, "CAN init failed!");
+    // }
     initializeI2C();
 
     MLX90642_Initialize();

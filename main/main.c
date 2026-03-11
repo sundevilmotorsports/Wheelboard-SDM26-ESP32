@@ -1,5 +1,3 @@
-#include "MLX90642.h"
-#include "MLX90642_depends.h"
 #include "driver/gpio.h"
 #include "driver/i2c_master.h"
 #include "driver/spi_master.h"
@@ -13,7 +11,23 @@
 #include "mcp2518fd.h"
 #include "sdkconfig.h"
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
+
+#if defined(__has_include)
+#if __has_include("MLX90642.h") && __has_include("MLX90642_depends.h")
+#define HAS_MLX90642 1
+#else
+#define HAS_MLX90642 0
+#endif
+#else
+#define HAS_MLX90642 0
+#endif
+
+#if HAS_MLX90642
+#include "MLX90642.h"
+#include "MLX90642_depends.h"
+#endif
 
 static const char *TAG = "Wheelboard";
 
@@ -34,12 +48,16 @@ spi_device_handle_t CAN2;
 #define I2C_SCL GPIO_NUM_5
 #define I2C_SDA GPIO_NUM_4
 
+#if HAS_MLX90642
 #define MLX_TOTAL_PIXELS 768
 #define MLX_WIDTH 24
 #define MLX_HEIGHT 32
+#endif
 
 static i2c_master_bus_handle_t i2c_bus = NULL;
+#if HAS_MLX90642
 static i2c_master_dev_handle_t mlx_dev = NULL;
+#endif
 
 static QueueHandle_t he_evt_queue = NULL;
 
@@ -47,6 +65,7 @@ static uint32_t g_wheel_speed = 0;
 static int16_t g_obj_temp = 0;
 static int16_t g_amb_temp = 0;
 
+#if HAS_MLX90642
 int MLX90642_I2CRead(uint8_t slaveAddr, uint16_t startAddress,
                      uint16_t nMemAddressRead, uint16_t *rData) {
     if (mlx_dev == NULL)
@@ -108,6 +127,8 @@ int MLX90642_I2CCmd(uint8_t slaveAddr, uint16_t i2c_cmd) {
 
     return MLX90642_I2CWrite(slaveAddr, buffer, 4);
 }
+
+#endif
 
 void initializeSPI() {
     // TODO: Interrupts
@@ -197,6 +218,7 @@ void initializeI2C() {
     ESP_ERROR_CHECK(i2c_new_master_bus(&i2c_mst_config, &i2c_bus));
 }
 
+#if HAS_MLX90642
 void MLX90642_Initialize() {
     i2c_device_config_t mlx_cfg = {
         .dev_addr_length = I2C_ADDR_BIT_LEN_7,
@@ -252,6 +274,11 @@ void MLX90642_Initialize() {
 
     ESP_LOGI(TAG, "MLX90642 initialized (refresh: %dms)", refresh_time);
 }
+#else
+void MLX90642_Initialize() {
+    ESP_LOGW(TAG, "MLX90642 library not present; temperature sensor task disabled");
+}
+#endif
 
 static void gpio_isr_handler(void *arg) {
     uint32_t gpio_num = (uint32_t) arg;
@@ -290,6 +317,7 @@ static void he_task(void *arg) {
     }
 }
 
+#if HAS_MLX90642
 static void mlx_task(void *arg) {
     uint16_t *data = malloc(MLX_TOTAL_PIXELS * sizeof(uint16_t));
     if (data == NULL) {
@@ -322,6 +350,7 @@ static void mlx_task(void *arg) {
 
     free(data);
 }
+#endif
 
 static void can_tx_task(void *arg) {
     for (;;) {
@@ -343,7 +372,9 @@ void app_main(void) {
 
     MLX90642_Initialize();
 
+#if HAS_MLX90642
     xTaskCreate(mlx_task, "mlx_task", 4096, NULL, 10, NULL);
+#endif
     xTaskCreate(can_tx_task, "can_tx_task", 4096, NULL, 9, NULL);
 
     gpio_config_t io_conf = {

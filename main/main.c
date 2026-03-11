@@ -57,7 +57,7 @@ int MLX90642_I2CRead(uint8_t slaveAddr, uint16_t startAddress,
     addr_buf[1] = startAddress & 0xFF;
 
     size_t read_size = nMemAddressRead * 2;
-    uint8_t *read_buf = malloc(read_size);
+    uint8_t *read_buf = malloc(read_size);a
     if (read_buf == NULL)
         return -1;
 

@@ -1,0 +1,2 @@
+source C:/VSCode/SAE/wheelboard/Wheelboard-SDM26-ESP32/build/bootloader/gdbinit/symbols
+source C:/VSCode/SAE/wheelboard/Wheelboard-SDM26-ESP32/build/bootloader/gdbinit/connect

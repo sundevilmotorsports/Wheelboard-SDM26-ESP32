@@ -47,6 +47,21 @@ static uint32_t g_wheel_speed = 0;
 static int16_t g_obj_temp = 0;
 static int16_t g_amb_temp = 0;
 
+static uint8_t wt1_buffer[8];
+static uint8_t wt2_buffer[8];
+
+static uint32_t FLW_ID = 0x370;
+static uint32_t FRW_ID = 0x380;
+static uint32_t RRW_ID = 0x390;
+static uint32_t RLW_ID = 0x3a0;
+
+static bool FL = true;
+static bool FR = false;
+static bool RR = false;
+static bool RL = false;
+
+static uint32_t WORKING_ID;
+
 int MLX90642_I2CRead(uint8_t slaveAddr, uint16_t startAddress,
                      uint16_t nMemAddressRead, uint16_t *rData) {
     if (mlx_dev == NULL)
@@ -135,7 +150,7 @@ void initializeCan() {
     twai_onchip_node_config_t node_config = {
         .io_cfg.tx = CAN1_TX,
         .io_cfg.rx = CAN1_RX,
-        .bit_timing.bitrate = 200000,
+        .bit_timing.bitrate =1000000,
         .tx_queue_depth = 5,
     };
 
@@ -151,7 +166,7 @@ void initializeCan() {
         return;
     }
 
-    ESP_LOGI(TAG, "CAN initialized on TX=%d, RX=%d @ 200kbps", CAN1_TX, CAN1_RX);
+    ESP_LOGI(TAG, "CAN initialized on TX=%d, RX=%d @ 1Mbps", CAN1_TX, CAN1_RX);
 }
 
 void sendCan1Message() {
@@ -167,7 +182,7 @@ void sendCan1Message() {
     tx_buffer[5] = g_amb_temp & 0xFF;
 
     twai_frame_t tx_msg = {
-        .header.id = 0x365,
+        .header.id = WORKING_ID,
         .header.ide = false,
         .header.rtr = false,
         .header.dlc = 6,
@@ -179,6 +194,37 @@ void sendCan1Message() {
     if (ret == ESP_OK) {
         ESP_LOGI(TAG, "CAN TX: RPM=%u, Obj=%d, Amb=%d", g_wheel_speed, g_obj_temp,
                  g_amb_temp);
+    } else {
+        ESP_LOGW(TAG, "Failed to send CAN message: %s", esp_err_to_name(ret));
+    }
+}
+
+void sendCan1Message2() {
+    twai_frame_t tx1_msg = {
+        .header.id = WORKING_ID + 1,
+        .header.ide = false,
+        .header.rtr = false,
+        .header.dlc = 8,
+        .buffer = wt1_buffer,
+        .buffer_len = 8,
+    };
+    twai_frame_t tx2_msg = {
+        .header.id = WORKING_ID + 2,
+        .header.ide = false,
+        .header.rtr = false,
+        .header.dlc = 8,
+        .buffer = wt2_buffer,
+        .buffer_len = 8,
+    };
+    esp_err_t ret = twai_node_transmit(CAN1, &tx1_msg, pdMS_TO_TICKS(100));
+    if (ret == ESP_OK) {
+        ESP_LOGI(TAG, "CAN TX: Sent Tire Temp 1");
+    } else {
+        ESP_LOGW(TAG, "Failed to send CAN message: %s", esp_err_to_name(ret));
+    }
+    ret = twai_node_transmit(CAN1, &tx2_msg, pdMS_TO_TICKS(100));
+    if (ret == ESP_OK) {
+        ESP_LOGI(TAG, "CAN TX: Sent Tire Temp 2");
     } else {
         ESP_LOGW(TAG, "Failed to send CAN message: %s", esp_err_to_name(ret));
     }
@@ -211,7 +257,10 @@ void MLX90642_Initialize() {
 
     // Wake up sensor
     uint8_t wake_cmd = 0x57;
-    i2c_master_transmit(mlx_dev, &wake_cmd, 1, 100);
+    if(i2c_master_transmit(mlx_dev, &wake_cmd, 1, 100) != ESP_OK){
+        ESP_LOGE(TAG, "Failed to wake MLX90642");
+        return;
+    }
     vTaskDelay(pdMS_TO_TICKS(50));
 
     uint16_t id[4];
@@ -311,8 +360,13 @@ static void mlx_task(void *arg) {
             if (MLX90642_GetImage(SA_90642_DEFAULT, data) == 0) {
                 g_amb_temp = 1;
                 g_obj_temp = 1;
+                for(int i = 3; i <= 10; i++){
+                    wt1_buffer[i-3] = data[(24 * 16) + i] >> 8;
+                }
+                for(int i = 11; i <= 18; i++){
+                    wt2_buffer[i-11] = data[(24 * 16) + i] >> 8;
+                }
             }
-
             MLX90642_ClearDataReady(SA_90642_DEFAULT);
             MLX90642_StartSync(SA_90642_DEFAULT);
         }
@@ -326,12 +380,19 @@ static void mlx_task(void *arg) {
 static void can_tx_task(void *arg) {
     for (;;) {
         sendCan1Message();
+        sendCan1Message2();
         vTaskDelay(pdMS_TO_TICKS(40));
     }
 }
 
 void app_main(void) {
     ESP_LOGI(TAG, "Starting Wheelboard");
+    if (FL + FR + RL + RR != 1){
+        ESP_LOGE(TAG, "Fix which wheelboard it is stupid (can only have one be true) fl = %d, fr = %d, rl = %d, rr = %d",FL,FR,RL,RR);
+        return;
+    } else {
+        WORKING_ID = FLW_ID * FL | FRW_ID * FR | RLW_ID * RL | RRW_ID * RR;
+    }
     vTaskDelay(pdMS_TO_TICKS(100));
 
     initializeCan();

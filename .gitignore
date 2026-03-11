@@ -3,3 +3,4 @@
 
 # Local devcontainer configuration
 .devcontainer/
+build/

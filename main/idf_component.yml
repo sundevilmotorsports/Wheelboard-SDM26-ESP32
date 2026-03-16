@@ -1,2 +1,7 @@
 dependencies:
-  espressif/led_strip: "^2.4.1"
+  idf:
+    version: '>=4.1.0'
+  external-managed-fix:
+    git: https://github.com/KadenGreen/ESP-IDF-External-Dependency-Fix.git
+  mlx90642-lib: 
+    git: https://github.com/melexis/mlx90642-library.git

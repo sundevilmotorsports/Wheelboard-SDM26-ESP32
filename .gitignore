@@ -3,4 +3,8 @@
 
 # Local devcontainer configuration
 .devcontainer/
-build/
+
+# Local build
+.build/
+
+.dependencies.lock

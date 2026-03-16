@@ -1,4 +1,5 @@
 ## Includes
-# Download, unzip and move to /managed_components
 
-1. https://github.com/melexis/mlx90642-library (if downloading re-name to mlx90642-library and make sure src is next directory)
+1. https://github.com/melexis/mlx90642-library
+
+If managed_components not installed first build will fail saying any github dependencies isn't a compoent, rebuild and it will work

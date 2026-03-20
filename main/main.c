@@ -45,13 +45,13 @@ spi_device_handle_t CAN2;
 #define RRW_ID 0x390
 #define RLW_ID 0x3a0
 
-#define FL true
+#define FL false
 #define FR false
-#define RR false
+#define RR true
 #define RL false
 
-#define CAN_DEBUG false
-#define MLX_DEBUG false
+#define CAN_DEBUG true
+#define MLX_DEBUG true
 
 static i2c_master_bus_handle_t i2c_bus = NULL;
 static i2c_master_dev_handle_t mlx_dev = NULL;

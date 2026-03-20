@@ -233,7 +233,7 @@ void initializeI2C() {
         .i2c_port = I2C_NUM_0,
         .scl_io_num = I2C_SCL,
         .sda_io_num = I2C_SDA,
-        .glitch_ignore_cnt = 14,
+        .glitch_ignore_cnt = 17,
         .flags.enable_internal_pullup = false,
     };
 
@@ -352,6 +352,19 @@ static void mlx_task(void *arg) {
                 for(int i = 11; i <= 18; i++){
                     wt2_buffer[i-11] = data[(24 * 16) + i] >> 8;
                 }
+
+                char s1[8*3 + 1] = {0};
+                char s2[8*3 + 1] = {0};
+                int off1 = 0, off2 = 0;
+                for (int i = 0; i < 8; ++i) {
+                    off1 += snprintf(s1 + off1, sizeof(s1) - off1, "%02X ", wt1_buffer[i]);
+                    off2 += snprintf(s2 + off2, sizeof(s2) - off2, "%02X ", wt2_buffer[i]);
+                }
+                if (off1 > 0) s1[off1-1] = '\0';
+                if (off2 > 0) s2[off2-1] = '\0';
+                ESP_LOGI(LOCAL_TAG, "wt1_buffer: %s", s1);
+                ESP_LOGI(LOCAL_TAG, "wt2_buffer: %s", s2);
+
             } else {
                 ESP_LOGE(LOCAL_TAG, "Failed to get image");
             }
@@ -365,11 +378,9 @@ static void mlx_task(void *arg) {
 }
 
 static void can1_tx_task(void *arg) {
-    TickType_t last_wake = xTaskGetTickCount();
-    uint32_t refresh_rate_hz = (uint32_t)arg;
     for (;;) {
         sendCan1Message();
-        vTaskDelayUntil(&last_wake, pdMS_TO_TICKS(1000 / refresh_rate_hz));
+        vTaskDelay(pdMS_TO_TICKS(25));
     }
 }
 
@@ -404,7 +415,7 @@ void app_main(void) {
 
     xTaskCreate(mlx_task, "mlx_task", 4096, NULL, 10, NULL);
     xTaskCreate(can1_tx_task, "can1_tx_task", 4096, (void*)200, 9, NULL);
-    xTaskCreate(can2_tx_task, "can2_tx_task", 4096, (void*)2, 9, NULL);
+    // xTaskCreate(can2_tx_task, "can2_tx_task", 4096, (void*)2, 9, NULL);
 
     gpio_config_t io_conf = {
         .intr_type = GPIO_INTR_NEGEDGE,

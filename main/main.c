@@ -38,10 +38,11 @@ spi_device_handle_t CAN2;
 
 #define HE_SENSOR_GPIO GPIO_NUM_6
 #define HE_MAGNET_COUNT 20U
-#define HE_MIN_INTERVAL_MS 10U
+#define HE_MIN_INTERVAL_MS 1U
+#define HE_DEBOUNCE_PERCENT 50U
 #define HE_STOP_TIMEOUT_MS 500U
 #define HE_STOP_TIMEOUT_MULTIPLIER 3U
-#define HE_QUEUE_POLL_MS 50U
+#define HE_QUEUE_POLL_MS 25U
 
 #define MLX_WIDTH 24
 #define MLX_HEIGHT 32
@@ -311,34 +312,43 @@ static void gpio_isr_handler(void *arg) {
 
 static void he_task(void *arg) {
     uint32_t io_num;
-    uint32_t last_time = 0;
+    uint32_t last_valid_time = 0;
     uint32_t last_interval_ms = 0;
 
     for (;;) {
         if (xQueueReceive(he_evt_queue, &io_num, pdMS_TO_TICKS(HE_QUEUE_POLL_MS))) {
             uint32_t current_time = esp_timer_get_time() / 1000;
 
-            if (last_time > 0) {
-                uint32_t time_diff = current_time - last_time;
+            if (last_valid_time > 0) {
+                uint32_t time_diff = current_time - last_valid_time;
+                uint32_t min_valid_interval_ms = HE_MIN_INTERVAL_MS;
 
-                if (time_diff > HE_MIN_INTERVAL_MS) {
+                if (last_interval_ms > 0) {
+                    uint32_t dynamic_debounce_ms = (last_interval_ms * HE_DEBOUNCE_PERCENT) / 100U;
+                    if (dynamic_debounce_ms > min_valid_interval_ms) {
+                        min_valid_interval_ms = dynamic_debounce_ms;
+                    }
+                }
+
+                if (time_diff >= min_valid_interval_ms) {
                     // RPM = (60000 ms/min) / (time_diff_ms * num_magnets)
                     uint32_t rpm = 60000U / (time_diff * HE_MAGNET_COUNT);
                     last_interval_ms = time_diff;
+                    last_valid_time = current_time;
                     g_wheel_speed = rpm;
                     ESP_LOGI(TAG, "Magnet pass - RPM: %lu (interval: %lu ms)", rpm, time_diff);
                 }
+            } else {
+                last_valid_time = current_time;
             }
-
-            last_time = current_time;
 
             vTaskDelay(pdMS_TO_TICKS(5));
 
             while (xQueueReceive(he_evt_queue, &io_num, 0)) {
             }
-        } else if (last_time > 0) {
+        } else if (last_valid_time > 0) {
             uint32_t current_time = esp_timer_get_time() / 1000;
-            uint32_t elapsed_ms = current_time - last_time;
+            uint32_t elapsed_ms = current_time - last_valid_time;
             uint32_t stop_timeout_ms = HE_STOP_TIMEOUT_MS;
 
             // Allow a few expected pulse periods before declaring the wheel stopped.
@@ -351,7 +361,7 @@ static void he_task(void *arg) {
 
             if (elapsed_ms >= stop_timeout_ms && g_wheel_speed != 0) {
                 g_wheel_speed = 0;
-                last_time = 0;
+                last_valid_time = 0;
                 last_interval_ms = 0;
                 ESP_LOGI(TAG, "No hall pulses for %lu ms, setting RPM to 0", elapsed_ms);
             }

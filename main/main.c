@@ -36,6 +36,13 @@ spi_device_handle_t CAN2;
 #define I2C_SCL GPIO_NUM_5
 #define I2C_SDA GPIO_NUM_4
 
+#define HE_SENSOR_GPIO GPIO_NUM_6
+#define HE_MAGNET_COUNT 20U
+#define HE_MIN_INTERVAL_MS 10U
+#define HE_STOP_TIMEOUT_MS 500U
+#define HE_STOP_TIMEOUT_MULTIPLIER 3U
+#define HE_QUEUE_POLL_MS 50U
+
 #define MLX_WIDTH 24
 #define MLX_HEIGHT 32
 #define MLX_TOTAL_PIXELS MLX_WIDTH * MLX_HEIGHT
@@ -305,19 +312,19 @@ static void gpio_isr_handler(void *arg) {
 static void he_task(void *arg) {
     uint32_t io_num;
     uint32_t last_time = 0;
-    uint32_t time_diff = 0;
-    const uint32_t MIN_INTERVAL_MS = 10; // Ignore triggers faster than 10ms
+    uint32_t last_interval_ms = 0;
 
     for (;;) {
-        if (xQueueReceive(he_evt_queue, &io_num, portMAX_DELAY)) {
+        if (xQueueReceive(he_evt_queue, &io_num, pdMS_TO_TICKS(HE_QUEUE_POLL_MS))) {
             uint32_t current_time = esp_timer_get_time() / 1000;
 
             if (last_time > 0) {
-                time_diff = current_time - last_time;
+                uint32_t time_diff = current_time - last_time;
 
-                if (time_diff > MIN_INTERVAL_MS) {
+                if (time_diff > HE_MIN_INTERVAL_MS) {
                     // RPM = (60000 ms/min) / (time_diff_ms * num_magnets)
-                    uint32_t rpm = (60000) / (time_diff * 20);
+                    uint32_t rpm = 60000U / (time_diff * HE_MAGNET_COUNT);
+                    last_interval_ms = time_diff;
                     g_wheel_speed = rpm;
                     ESP_LOGI(TAG, "Magnet pass - RPM: %lu (interval: %lu ms)", rpm, time_diff);
                 }
@@ -328,6 +335,25 @@ static void he_task(void *arg) {
             vTaskDelay(pdMS_TO_TICKS(5));
 
             while (xQueueReceive(he_evt_queue, &io_num, 0)) {
+            }
+        } else if (last_time > 0) {
+            uint32_t current_time = esp_timer_get_time() / 1000;
+            uint32_t elapsed_ms = current_time - last_time;
+            uint32_t stop_timeout_ms = HE_STOP_TIMEOUT_MS;
+
+            // Allow a few expected pulse periods before declaring the wheel stopped.
+            if (last_interval_ms > 0) {
+                uint32_t interval_timeout_ms = last_interval_ms * HE_STOP_TIMEOUT_MULTIPLIER;
+                if (interval_timeout_ms > stop_timeout_ms) {
+                    stop_timeout_ms = interval_timeout_ms;
+                }
+            }
+
+            if (elapsed_ms >= stop_timeout_ms && g_wheel_speed != 0) {
+                g_wheel_speed = 0;
+                last_time = 0;
+                last_interval_ms = 0;
+                ESP_LOGI(TAG, "No hall pulses for %lu ms, setting RPM to 0", elapsed_ms);
             }
         }
     }
@@ -413,14 +439,14 @@ void app_main(void) {
 
     MLX90642_Initialize();
 
-    xTaskCreate(mlx_task, "mlx_task", 4096, NULL, 10, NULL);
+    // xTaskCreate(mlx_task, "mlx_task", 4096, NULL, 10, NULL);
     xTaskCreate(can1_tx_task, "can1_tx_task", 4096, (void*)200, 9, NULL);
     // xTaskCreate(can2_tx_task, "can2_tx_task", 4096, (void*)2, 9, NULL);
 
     gpio_config_t io_conf = {
         .intr_type = GPIO_INTR_NEGEDGE,
         .mode = GPIO_MODE_INPUT,
-        .pin_bit_mask = (1ULL << GPIO_NUM_6),
+        .pin_bit_mask = (1ULL << HE_SENSOR_GPIO),
         .pull_down_en = GPIO_PULLDOWN_DISABLE,
         .pull_up_en = GPIO_PULLUP_DISABLE
     };
@@ -430,7 +456,7 @@ void app_main(void) {
     xTaskCreate(he_task, "he_task", 4096, NULL, 10, NULL);
 
     gpio_install_isr_service(0);
-    gpio_isr_handler_add(GPIO_NUM_6, gpio_isr_handler, (void *) GPIO_NUM_6);
+    gpio_isr_handler_add(HE_SENSOR_GPIO, gpio_isr_handler, (void *) HE_SENSOR_GPIO);
 
     ESP_LOGI(TAG, "Everything initialized\n");
 

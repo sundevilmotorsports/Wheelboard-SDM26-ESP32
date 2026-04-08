@@ -1,0 +1,18 @@
+dependencies:
+  idf:
+    source:
+      type: idf
+    version: 5.5.1
+  mlx90614:
+    component_hash: 4621725e29783b788e830af014a7357ce40fb1b7a91ecf20ed7e4412b5ce4986
+    dependencies: []
+    source:
+      git: https://github.com/KadenGreen/MLX90614-ESP32-Library.git
+      path: .
+      type: git
+    version: 3f3a11a921a3fbbad341af8d86b39bfed03f492d
+direct_dependencies:
+- mlx90614
+manifest_hash: fbbd478e4d0e0b761f31caeb2f6209c4063fa0fa19eaf4bf44de8e8cdfc9c105
+target: esp32s3
+version: 2.0.0

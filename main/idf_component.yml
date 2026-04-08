@@ -1,0 +1,4 @@
+dependencies:
+  mlx90614:
+    git: https://github.com/KadenGreen/MLX90614-ESP32-Library.git
+    version: main

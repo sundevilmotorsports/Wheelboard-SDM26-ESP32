@@ -1,5 +1,5 @@
 idf_component_register(
-    SRCS "main.c" "mcp2518fd.c"
+    SRCS "main.c" "mcp2518fd.c" "mlx.c"
     INCLUDE_DIRS "."
-    REQUIRES driver log esp_timer freertos mlx90642
+    REQUIRES driver log esp_timer freertos mlx90642 mlx90614
 )

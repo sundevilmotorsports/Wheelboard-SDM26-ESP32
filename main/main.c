@@ -14,7 +14,10 @@
 #include "sdkconfig.h"
 #include <stdio.h>
 #include <string.h>
-
+#include "mlx.h"
+#include "MLX90614.h"
+#include "MLX90642.h"
+#include "MLX90642_depends.h"
 static const char *TAG = "Wheelboard";
 
 twai_node_handle_t CAN1 = NULL;
@@ -44,10 +47,6 @@ spi_device_handle_t CAN2;
 #define HE_STOP_TIMEOUT_MULTIPLIER 3U
 #define HE_QUEUE_POLL_MS 25U
 
-#define MLX_WIDTH 24
-#define MLX_HEIGHT 32
-#define MLX_TOTAL_PIXELS MLX_WIDTH * MLX_HEIGHT
-
 #define FLW_ID 0x370
 #define FRW_ID 0x380
 #define RRW_ID 0x390
@@ -58,76 +57,24 @@ spi_device_handle_t CAN2;
 #define RR true
 #define RL false
 
-#define CAN_DEBUG true
-#define MLX_DEBUG true
+#define CAN_DEBUG false
 
+static i2c_master_dev_handle_t mlx_camera_dev = NULL;
+static i2c_master_dev_handle_t mlx_pix_dev = NULL;
 static i2c_master_bus_handle_t i2c_bus = NULL;
-static i2c_master_dev_handle_t mlx_dev = NULL;
+
 static QueueHandle_t he_evt_queue = NULL;
 
 static uint32_t g_wheel_speed = 0;
-static int16_t g_obj_temp = 0;
-static int16_t g_amb_temp = 0;
-
-static uint8_t wt1_buffer[8];
-static uint8_t wt2_buffer[8]; 
+static float g_obj_temp = 0;
+static float g_amb_temp = 0;
 
 static uint32_t WORKING_ID;
 
-int MLX90642_I2CRead(uint8_t slaveAddr, uint16_t startAddress,uint16_t nMemAddressRead, uint16_t *rData) {
-    if (mlx_dev == NULL) return -1;
-
-    uint8_t addr_buf[2];
-    addr_buf[0] = (startAddress >> 8) & 0xFF;
-    addr_buf[1] = startAddress & 0xFF;
-
-    size_t read_size = nMemAddressRead * 2;
-    uint8_t *read_buf = malloc(read_size);
-    if (read_buf == NULL)return -1;
-
-    esp_err_t ret = i2c_master_transmit_receive(mlx_dev, addr_buf, sizeof(addr_buf), read_buf, read_size, 1000);
-    if (ret != ESP_OK) {
-        free(read_buf);
-        return -1;
-    }
-
-    // Convert bytes to 16-bit words (big-endian)
-    for (int i = 0; i < nMemAddressRead; i++) {
-        rData[i] = (read_buf[i * 2] << 8) | read_buf[i * 2 + 1];
-    }
-
-    free(read_buf);
-    return 0;
-}
-
-int MLX90642_I2CWrite(uint8_t slaveAddr, uint8_t *buffer, uint8_t bytesNum) {
-    if (mlx_dev == NULL) return -1;
-    return (i2c_master_transmit(mlx_dev, buffer, bytesNum, 1000) == ESP_OK) ? 0 : -1;
-}
-
-void MLX90642_Wait_ms(uint16_t time_ms) { vTaskDelay(pdMS_TO_TICKS(time_ms)); }
-
-int MLX90642_Config(uint8_t slaveAddr, uint16_t writeAddress, uint16_t wData) {
-    uint8_t buffer[6];
-    buffer[0] = (writeAddress >> 8) & 0xFF; // Address MSB
-    buffer[1] = writeAddress & 0xFF; // Address LSB
-    buffer[2] = 0x00; // Padding MSB
-    buffer[3] = 0x00; // Padding LSB
-    buffer[4] = (wData >> 8) & 0xFF; // Data MSB
-    buffer[5] = wData & 0xFF; // Data LSB
-
-    return MLX90642_I2CWrite(slaveAddr, buffer, 6);
-}
-
-int MLX90642_I2CCmd(uint8_t slaveAddr, uint16_t i2c_cmd) {
-    uint8_t buffer[4];
-    buffer[0] = 0x01; // Command address MSB
-    buffer[1] = 0x80; // Command address LSB (0x0180)
-    buffer[2] = (i2c_cmd >> 8) & 0xFF; // Command MSB
-    buffer[3] = i2c_cmd & 0xFF; // Command LSB
-
-    return MLX90642_I2CWrite(slaveAddr, buffer, 4);
-}
+static uint16_t data[MLX_TOTAL_PIXELS];
+static uint8_t tx_buffer[8];
+static uint8_t wt1_buffer[8];
+static uint8_t wt2_buffer[8]; 
 
 void initializeSPI() {
     // TODO: Interrupts
@@ -157,7 +104,7 @@ void initializeCan() {
         .io_cfg.tx = CAN1_TX,
         .io_cfg.rx = CAN1_RX,
         .bit_timing.bitrate = CAN1_BAUD,
-        .tx_queue_depth = 5,
+        .tx_queue_depth = 10,
     };
     esp_err_t ret = twai_new_node_onchip(&node_config, &CAN1);
     if (ret != ESP_OK) {
@@ -175,16 +122,18 @@ void initializeCan() {
 
 void sendCan1Message() {
     const char* LOCAL_TAG = "CAN 1 TX";
-    uint8_t tx_buffer[8];
 
     tx_buffer[0] = (g_wheel_speed >> 8) & 0xFF;
     tx_buffer[1] = g_wheel_speed & 0xFF;
 
-    tx_buffer[2] = (g_obj_temp >> 8) & 0xFF;
-    tx_buffer[3] = g_obj_temp & 0xFF;
+    uint16_t obj_temp = (uint16_t) g_obj_temp; 
+    uint16_t amb_temp = (uint16_t) g_amb_temp; 
 
-    tx_buffer[4] = (g_amb_temp >> 8) & 0xFF;
-    tx_buffer[5] = g_amb_temp & 0xFF;
+    tx_buffer[2] = (obj_temp >> 8) & 0xFF;
+    tx_buffer[3] = obj_temp & 0xFF;
+
+    tx_buffer[4] = (amb_temp >> 8) & 0xFF;
+    tx_buffer[5] = amb_temp & 0xFF;
 
     twai_frame_t tx_msg = {
         .header.id = WORKING_ID,
@@ -228,9 +177,9 @@ void sendCan1Message2() {
         ret = twai_node_transmit(CAN1, &tx2_msg, pdMS_TO_TICKS(CAN1_TIMEOUT));
         if (ret == ESP_OK) ESP_LOGI(LOCAL_TAG, "Sent Tire Temp 2");
         else ESP_LOGW(LOCAL_TAG, "Failed to send CAN message: %s", esp_err_to_name(ret));
-
     } else {
         twai_node_transmit(CAN1, &tx1_msg, pdMS_TO_TICKS(CAN1_TIMEOUT));
+        vTaskDelay(pdMS_TO_TICKS(5)); // needed to not crash don't ask
         twai_node_transmit(CAN1, &tx2_msg, pdMS_TO_TICKS(CAN1_TIMEOUT));
     }
 }
@@ -242,68 +191,12 @@ void initializeI2C() {
         .scl_io_num = I2C_SCL,
         .sda_io_num = I2C_SDA,
         .glitch_ignore_cnt = 17,
-        .flags.enable_internal_pullup = false,
+        .flags.enable_internal_pullup = false
     };
-
     ESP_ERROR_CHECK(i2c_new_master_bus(&i2c_mst_config, &i2c_bus));
 }
 
-void MLX90642_Initialize() {
-    i2c_device_config_t mlx_cfg = {
-        .dev_addr_length = I2C_ADDR_BIT_LEN_7,
-        .device_address = SA_90642_DEFAULT,
-        .scl_speed_hz = 100000,
-    };
-    esp_err_t ret = i2c_master_bus_add_device(i2c_bus, &mlx_cfg, &mlx_dev);
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to add MLX90642 device: %s", esp_err_to_name(ret));
-        return;
-    }
 
-    // Wake up sensor
-    uint8_t wake_cmd = 0x57;
-    if(i2c_master_transmit(mlx_dev, &wake_cmd, 1, 100) != ESP_OK){
-        ESP_LOGE(TAG, "Failed to wake MLX90642");
-        return;
-    }
-    vTaskDelay(pdMS_TO_TICKS(50));
-
-    uint16_t id[4];
-    if (MLX90642_I2CRead(SA_90642_DEFAULT, 0x1230, 4, id) != 0) {
-        ESP_LOGE(TAG, "MLX90642 not responding");
-        return;
-    }
-    ESP_LOGI(TAG, "MLX90642 ID: %04X %04X %04X %04X", id[0], id[1], id[2], id[3]);
-
-    // Ensure sensor is in continuous mode
-    if (MLX90642_GetMeasMode(SA_90642_DEFAULT) == 0x0800) {
-        MLX90642_SetMeasMode(SA_90642_DEFAULT, 0x0000);
-        vTaskDelay(pdMS_TO_TICKS(20));
-    }
-
-    int refresh_rate = MLX90642_GetRefreshRate(SA_90642_DEFAULT);
-    if (refresh_rate < 0) {
-        ESP_LOGE(TAG, "Failed to get refresh rate");
-        return;
-    }
-    int refresh_time = 2000 >> refresh_rate;
-
-    MLX90642_ClearDataReady(SA_90642_DEFAULT);
-    MLX90642_StartSync(SA_90642_DEFAULT);
-    vTaskDelay(pdMS_TO_TICKS(refresh_time));
-
-    // Wait for first measurement
-    int ready = MLX90642_NO;
-    for (int i = 0; i < 100 && ready == MLX90642_NO; i++) {
-        if(MLX90642_IsDataReady(SA_90642_DEFAULT) == MLX90642_YES){
-            ESP_LOGI(TAG, "MLX90642 initialized (refresh: %dms)", refresh_time);
-            return;
-        }
-        vTaskDelay(pdMS_TO_TICKS(10));
-    }
-    ESP_LOGE(TAG, "Sensor initialization timeout");
-    return;    
-}
 
 static void gpio_isr_handler(void *arg) {
     uint32_t gpio_num = (uint32_t) arg;
@@ -369,54 +262,30 @@ static void he_task(void *arg) {
     }
 }
 
-static void mlx_task(void *arg) {
-    uint16_t *data = malloc(MLX_TOTAL_PIXELS * sizeof(uint16_t));
-    const char* LOCAL_TAG = "MLX TASK";
-    if (data == NULL) {
-        ESP_LOGE(LOCAL_TAG, "Failed to allocate memory");
+static void mlx_pix_task(void *arg){
+    const char* LOCAL_TAG = "MLX PIX TASK";
+    TickType_t last_wake = xTaskGetTickCount();
+    uint32_t refresh_rate_hz = (uint32_t)arg;
+    esp_err_t ret = MLX90614_init(i2c_bus, &mlx_pix_dev, MLX90614_DEFAULT_ADDRESS, MLX90614_DEFAULT_SPEED);
+    if(ret != ESP_OK){
+        ESP_LOGE(LOCAL_TAG, "FAILD PIXEL INIT");
         return;
     }
-
-    for (;;) {
-        if(MLX90642_IsDataReady(SA_90642_DEFAULT) == MLX90642_YES){
-            if (MLX90642_GetImage(SA_90642_DEFAULT, data) == 0) {
-                g_amb_temp = 1;
-                g_obj_temp = 1;
-                for(int i = 3; i <= 10; i++){
-                    wt1_buffer[i-3] = data[(24 * 16) + i] >> 8;
-                }
-                for(int i = 11; i <= 18; i++){
-                    wt2_buffer[i-11] = data[(24 * 16) + i] >> 8;
-                }
-
-                char s1[8*3 + 1] = {0};
-                char s2[8*3 + 1] = {0};
-                int off1 = 0, off2 = 0;
-                for (int i = 0; i < 8; ++i) {
-                    off1 += snprintf(s1 + off1, sizeof(s1) - off1, "%02X ", wt1_buffer[i]);
-                    off2 += snprintf(s2 + off2, sizeof(s2) - off2, "%02X ", wt2_buffer[i]);
-                }
-                if (off1 > 0) s1[off1-1] = '\0';
-                if (off2 > 0) s2[off2-1] = '\0';
-                ESP_LOGI(LOCAL_TAG, "wt1_buffer: %s", s1);
-                ESP_LOGI(LOCAL_TAG, "wt2_buffer: %s", s2);
-
-            } else {
-                ESP_LOGE(LOCAL_TAG, "Failed to get image");
-            }
-            MLX90642_ClearDataReady(SA_90642_DEFAULT);
-            MLX90642_StartSync(SA_90642_DEFAULT);
-            vTaskDelay(pdMS_TO_TICKS(1000));
-        } else if (MLX_DEBUG) ESP_LOGW(LOCAL_TAG, "MLX Not Ready");
-        vTaskDelay(pdMS_TO_TICKS(10));
-    }   
-    free(data);
+    for(;;){
+        ret = MLX90614_GetAmbObjTemp(mlx_pix_dev, MLX90614_DEFAULT_ADDRESS, &g_amb_temp, &g_obj_temp);
+        if(ret != ESP_OK)ESP_LOGE(LOCAL_TAG, "Failed to get object temp %s", esp_err_to_name(ret));
+        vTaskDelayUntil(&last_wake, pdMS_TO_TICKS(1000 / refresh_rate_hz));
+    }
 }
 
+
+
 static void can1_tx_task(void *arg) {
+    TickType_t last_wake = xTaskGetTickCount();
+    uint32_t refresh_rate_hz = (uint32_t)arg;
     for (;;) {
         sendCan1Message();
-        vTaskDelay(pdMS_TO_TICKS(25));
+        vTaskDelayUntil(&last_wake, pdMS_TO_TICKS(1000 / refresh_rate_hz));
     }
 }
 
@@ -438,7 +307,7 @@ void app_main(void) {
         WORKING_ID = FLW_ID * FL | FRW_ID * FR | RLW_ID * RL | RRW_ID * RR;
         ESP_LOGI(TAG, "Working ID: 0x%x", WORKING_ID);
     }
-    vTaskDelay(pdMS_TO_TICKS(100));
+    vTaskDelay(pdMS_TO_TICKS(5));
 
     initializeCan();
     initializeSPI();
@@ -446,12 +315,12 @@ void app_main(void) {
         ESP_LOGE(TAG, "CAN2 init failed!");
     }
     initializeI2C();
-
-    MLX90642_Initialize();
-
-    // xTaskCreate(mlx_task, "mlx_task", 4096, NULL, 10, NULL);
+    esp_err_t ret = MLX90642_Initialize(i2c_bus, &mlx_camera_dev, data);
+    if(ret != ESP_OK) ESP_LOGE(TAG, "Failed to add MLX90642 device: %s", esp_err_to_name(ret));
+    xTaskCreate(mlx_pix_task, "mlx_pix_task", 4096, (void*)50, 10, NULL);
+    xTaskCreate(mlx_camera_task, "mlx_camera_task", 4096, NULL, 10, NULL);
     xTaskCreate(can1_tx_task, "can1_tx_task", 4096, (void*)200, 9, NULL);
-    // xTaskCreate(can2_tx_task, "can2_tx_task", 4096, (void*)2, 9, NULL);
+    xTaskCreate(can2_tx_task, "can2_tx_task", 4096, (void*)2, 9, NULL);
 
     gpio_config_t io_conf = {
         .intr_type = GPIO_INTR_NEGEDGE,

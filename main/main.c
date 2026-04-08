@@ -52,10 +52,8 @@ spi_device_handle_t CAN2;
 #define RRW_ID 0x390
 #define RLW_ID 0x3a0
 
-#define FL false
-#define FR false
-#define RR true
-#define RL false
+typedef enum { BOARD_FL, BOARD_FR, BOARD_RR, BOARD_RL } board_pos_t;
+#define BOARD_POSITION BOARD_RR
 
 #define CAN_DEBUG false
 
@@ -76,7 +74,7 @@ static uint8_t tx_buffer[8];
 static uint8_t wt1_buffer[8];
 static uint8_t wt2_buffer[8]; 
 
-void initializeSPI() {
+esp_err_t initializeSPI() {
     // TODO: Interrupts
     spi_bus_config_t cfg = {
         .mosi_io_num = CAN2_MOSI,
@@ -86,7 +84,8 @@ void initializeSPI() {
         .quadhd_io_num = -1,
     };
 
-    ESP_ERROR_CHECK(spi_bus_initialize(SPI2_HOST, &cfg, SPI_DMA_DISABLED));
+    esp_err_t ret = spi_bus_initialize(SPI2_HOST, &cfg, SPI_DMA_DISABLED);
+    if (ret != ESP_OK) return ret;
 
     spi_device_interface_config_t dev_config = {
         .clock_speed_hz = 10000000,
@@ -95,7 +94,7 @@ void initializeSPI() {
         .queue_size = 5,
     };
 
-    ESP_ERROR_CHECK(spi_bus_add_device(SPI2_HOST, &dev_config, &CAN2));
+    return spi_bus_add_device(SPI2_HOST, &dev_config, &CAN2);
 }
 
 void initializeCan() {
@@ -184,7 +183,7 @@ void sendCan1Message2() {
     }
 }
 
-void initializeI2C() {
+esp_err_t initializeI2C() {
     i2c_master_bus_config_t i2c_mst_config = {
         .clk_source = I2C_CLK_SRC_DEFAULT,
         .i2c_port = I2C_NUM_0,
@@ -193,7 +192,7 @@ void initializeI2C() {
         .glitch_ignore_cnt = 17,
         .flags.enable_internal_pullup = false
     };
-    ESP_ERROR_CHECK(i2c_new_master_bus(&i2c_mst_config, &i2c_bus));
+    return i2c_new_master_bus(&i2c_mst_config, &i2c_bus);
 }
 
 
@@ -299,28 +298,41 @@ static void can2_tx_task(void *arg) {
 }
 
 void app_main(void) {
-    ESP_LOGI(TAG, "Starting Wheelboard");
-    if (FL + FR + RL + RR != 1){
-        ESP_LOGE(TAG, "Fix which wheelboard it is stupid (can only have one be true) fl = %d, fr = %d, rl = %d, rr = %d",FL,FR,RL,RR);
-        return;
-    } else {
-        WORKING_ID = FLW_ID * FL | FRW_ID * FR | RLW_ID * RL | RRW_ID * RR;
-        ESP_LOGI(TAG, "Working ID: 0x%x", WORKING_ID);
-    }
+    static const uint32_t board_ids[]       = {FLW_ID,  FRW_ID,  RRW_ID,  RLW_ID};
+    static const char * const board_names[] = {"FL",    "FR",    "RR",    "RL"};
+    WORKING_ID = board_ids[BOARD_POSITION];
+    ESP_LOGI(TAG, "Wheelboard: %s, Working ID: 0x%lx", board_names[BOARD_POSITION], WORKING_ID);
+
     vTaskDelay(pdMS_TO_TICKS(5));
 
     initializeCan();
-    initializeSPI();
-    if (mcp_init(CAN2) != ESP_OK) {
-        ESP_LOGE(TAG, "CAN2 init failed!");
+
+    bool can2_ok = false;
+    esp_err_t ret = initializeSPI();
+    if (ret == ESP_OK) {
+        can2_ok = (mcp_init(CAN2) == ESP_OK);
+        if (!can2_ok) ESP_LOGE(TAG, "CAN2 unavailable");
+    } else {
+        ESP_LOGE(TAG, "SPI init failed (%s), CAN2 disabled", esp_err_to_name(ret));
     }
-    initializeI2C();
-    esp_err_t ret = MLX90642_Initialize(i2c_bus, &mlx_camera_dev, data);
-    if(ret != ESP_OK) ESP_LOGE(TAG, "Failed to add MLX90642 device: %s", esp_err_to_name(ret));
-    xTaskCreate(mlx_pix_task, "mlx_pix_task", 4096, (void*)50, 10, NULL);
-    xTaskCreate(mlx_camera_task, "mlx_camera_task", 4096, NULL, 10, NULL);
+
+    bool mlx_ok = false;
+    ret = initializeI2C();
+    if (ret == ESP_OK) {
+        ret = MLX90642_Initialize(i2c_bus, &mlx_camera_dev, data);
+        mlx_ok = (ret == ESP_OK);
+        if (!mlx_ok) ESP_LOGW(TAG, "MLX90642 unavailable (%s), thermal data disabled", esp_err_to_name(ret));
+    } else {
+        ESP_LOGW(TAG, "I2C init failed (%s), MLX disabled", esp_err_to_name(ret));
+    }
+
     xTaskCreate(can1_tx_task, "can1_tx_task", 4096, (void*)200, 9, NULL);
-    xTaskCreate(can2_tx_task, "can2_tx_task", 4096, (void*)2, 9, NULL);
+
+    if (mlx_ok) {
+        xTaskCreate(mlx_pix_task, "mlx_pix_task", 4096, (void*)50, 10, NULL);
+        xTaskCreate(mlx_camera_task, "mlx_camera_task", 4096, NULL, 10, NULL);
+        xTaskCreate(can2_tx_task, "can2_tx_task", 4096, (void*)2, 9, NULL);
+    }
 
     gpio_config_t io_conf = {
         .intr_type = GPIO_INTR_NEGEDGE,

@@ -1,5 +1,6 @@
 #include "mlx.h"
-i2c_master_dev_handle_t *dev;
+static i2c_master_dev_handle_t *dev;
+static bool mlx_ready = false;
 uint16_t data[MLX_TOTAL_PIXELS];
 
 esp_err_t MLX90642_Initialize(i2c_master_bus_handle_t bus, i2c_master_dev_handle_t *mlx_dev, uint16_t *data) {
@@ -43,6 +44,7 @@ esp_err_t MLX90642_Initialize(i2c_master_bus_handle_t bus, i2c_master_dev_handle
     for (int i = 0; i < 100 && ready == MLX90642_NO; i++) {
         if(MLX90642_IsDataReady(SA_90642_DEFAULT) == MLX90642_YES){
             ESP_LOGI(LOCAL_TAG, "MLX90642 initialized (refresh: %dms)", refresh_time);
+            mlx_ready = true;
             return ESP_OK;
         }
         vTaskDelay(pdMS_TO_TICKS(10));
@@ -109,6 +111,11 @@ int MLX90642_I2CCmd(uint8_t slaveAddr, uint16_t i2c_cmd){
 
 void mlx_camera_task(void* args) {
     const char* LOCAL_TAG = "MLX CAMERA TASK";
+    if (!mlx_ready) {
+        ESP_LOGE(LOCAL_TAG, "MLX not initialized, task exiting");
+        vTaskDelete(NULL);
+        return;
+    }
     for (;;) {
         if(MLX90642_IsDataReady(SA_90642_DEFAULT) == MLX90642_YES){
             if (MLX90642_GetImage(SA_90642_DEFAULT, data) == 0) {

@@ -263,37 +263,40 @@ static void he_task(void *arg) {
 
 static void mlx_pix_task(void *arg){
     const char* LOCAL_TAG = "MLX PIX TASK";
-    TickType_t last_wake = xTaskGetTickCount();
     uint32_t refresh_rate_hz = (uint32_t)arg;
-    esp_err_t ret = MLX90614_init(i2c_bus, &mlx_pix_dev, MLX90614_DEFAULT_ADDRESS, MLX90614_DEFAULT_SPEED);
-    if(ret != ESP_OK){
-        ESP_LOGE(LOCAL_TAG, "FAILD PIXEL INIT");
-        return;
-    }
-    for(;;){
-        ret = MLX90614_GetAmbObjTemp(mlx_pix_dev, MLX90614_DEFAULT_ADDRESS, &g_amb_temp, &g_obj_temp);
-        if(ret != ESP_OK)ESP_LOGE(LOCAL_TAG, "Failed to get object temp %s", esp_err_to_name(ret));
-        vTaskDelayUntil(&last_wake, pdMS_TO_TICKS(1000 / refresh_rate_hz));
+    TickType_t period_ticks = pdMS_TO_TICKS(1000 / refresh_rate_hz);
+    configASSERT(period_ticks > 0); // rate too high for CONFIG_FREERTOS_HZ
+    TickType_t last_wake = xTaskGetTickCount();
+    for(;;) {
+        esp_err_t ret = MLX90614_GetAmbObjTemp(mlx_pix_dev, MLX90614_DEFAULT_ADDRESS, &g_amb_temp, &g_obj_temp);
+        if(ret != ESP_OK) ESP_LOGE(LOCAL_TAG, "Failed to get object temp %s", esp_err_to_name(ret));
+        vTaskDelayUntil(&last_wake, period_ticks);
     }
 }
 
-
-
 static void can1_tx_task(void *arg) {
-    TickType_t last_wake = xTaskGetTickCount();
     uint32_t refresh_rate_hz = (uint32_t)arg;
+    TickType_t period_ticks = pdMS_TO_TICKS(1000 / refresh_rate_hz);
+
+    configASSERT(period_ticks > 0);
+
+    TickType_t last_wake = xTaskGetTickCount();
     for (;;) {
         sendCan1Message();
-        vTaskDelayUntil(&last_wake, pdMS_TO_TICKS(1000 / refresh_rate_hz));
+        vTaskDelayUntil(&last_wake, period_ticks);
     }
 }
 
 static void can2_tx_task(void *arg) {
-    TickType_t last_wake = xTaskGetTickCount();
     uint32_t refresh_rate_hz = (uint32_t)arg;
+    TickType_t period_ticks = pdMS_TO_TICKS(1000 / refresh_rate_hz);
+
+    configASSERT(period_ticks > 0);
+
+    TickType_t last_wake = xTaskGetTickCount();
     for (;;) {
         sendCan1Message2();
-        vTaskDelayUntil(&last_wake, pdMS_TO_TICKS(1000 / refresh_rate_hz));
+        vTaskDelayUntil(&last_wake, period_ticks);
     }
 }
 
@@ -316,20 +319,27 @@ void app_main(void) {
         ESP_LOGE(TAG, "SPI init failed (%s), CAN2 disabled", esp_err_to_name(ret));
     }
 
-    bool mlx_ok = false;
+    bool mlx_pix_ok = false;
+    bool mlx_camera_ok = false;
     ret = initializeI2C();
     if (ret == ESP_OK) {
+        ret = MLX90614_init(i2c_bus, &mlx_pix_dev, MLX90614_DEFAULT_ADDRESS, MLX90614_DEFAULT_SPEED);
+        mlx_pix_ok = (ret == ESP_OK);
+        if (!mlx_pix_ok) ESP_LOGW(TAG, "MLX90614 unavailable (%s), amb temp disabled", esp_err_to_name(ret));
+
         ret = MLX90642_Initialize(i2c_bus, &mlx_camera_dev, data);
-        mlx_ok = (ret == ESP_OK);
-        if (!mlx_ok) ESP_LOGW(TAG, "MLX90642 unavailable (%s), thermal data disabled", esp_err_to_name(ret));
+        mlx_camera_ok = (ret == ESP_OK);
+        if (!mlx_camera_ok) ESP_LOGW(TAG, "MLX90642 unavailable (%s), img array disabled", esp_err_to_name(ret));
     } else {
-        ESP_LOGW(TAG, "I2C init failed (%s), MLX disabled", esp_err_to_name(ret));
+        ESP_LOGW(TAG, "I2C init failed (%s), MLX sensors disabled", esp_err_to_name(ret));
     }
 
     xTaskCreate(can1_tx_task, "can1_tx_task", 4096, (void*)200, 9, NULL);
 
-    if (mlx_ok) {
+    if (mlx_pix_ok) {
         xTaskCreate(mlx_pix_task, "mlx_pix_task", 4096, (void*)50, 10, NULL);
+    }
+    if (mlx_camera_ok) {
         xTaskCreate(mlx_camera_task, "mlx_camera_task", 4096, NULL, 10, NULL);
         xTaskCreate(can2_tx_task, "can2_tx_task", 4096, (void*)2, 9, NULL);
     }

@@ -18,6 +18,13 @@
 #include "MLX90614.h"
 #include "MLX90642.h"
 #include "MLX90642_depends.h"
+#include "ota.h"
+#include "esp_wifi.h"
+#include "esp_event.h"
+#include "esp_log.h"
+#include "nvs_flash.h"
+#include "hal/wdt_hal.h"
+
 static const char *TAG = "Wheelboard";
 
 twai_node_handle_t CAN1 = NULL;
@@ -300,11 +307,52 @@ static void can2_tx_task(void *arg) {
     }
 }
 
+void wifi_init_ap(const char* name) {
+    esp_netif_init();
+    esp_event_loop_create_default();
+    esp_netif_create_default_wifi_ap();
+
+    wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
+    esp_wifi_init(&cfg);
+
+    char ssid[32];
+    snprintf(ssid, sizeof(ssid), "wb_%s", name);
+
+    wifi_config_t wifi_config = {
+        .ap = {
+            .ssid_len = strlen(ssid),
+            .max_connection = 1,
+            .authmode = WIFI_AUTH_WPA_WPA2_PSK
+        },
+    };
+
+    strcpy((char*)wifi_config.ap.ssid, ssid);
+    strcpy((char*)wifi_config.ap.password, "12345678");
+
+    esp_wifi_set_mode(WIFI_MODE_AP);
+    esp_wifi_set_config(WIFI_IF_AP, &wifi_config);
+    esp_wifi_start();
+}
+
 void app_main(void) {
+    nvs_flash_init();
+
+    ota_mark_app_valid();
+
     static const uint32_t board_ids[]       = {FLW_ID,  FRW_ID,  RRW_ID,  RLW_ID};
     static const char * const board_names[] = {"FL",    "FR",    "RR",    "RL"};
     WORKING_ID = board_ids[BOARD_POSITION];
     ESP_LOGI(TAG, "Wheelboard: %s, Working ID: 0x%lx", board_names[BOARD_POSITION], WORKING_ID);
+
+    wifi_init_ap(board_names[BOARD_POSITION]);
+
+    vTaskDelay(pdMS_TO_TICKS(1000));
+
+    start_ota_server();
+
+    wdt_hal_context_t rtc_wdt_ctx = RWDT_HAL_CONTEXT_DEFAULT();
+    wdt_hal_write_protect_disable(&rtc_wdt_ctx);
+    wdt_hal_disable(&rtc_wdt_ctx);
 
     vTaskDelay(pdMS_TO_TICKS(5));
 

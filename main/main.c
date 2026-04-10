@@ -60,7 +60,7 @@ spi_device_handle_t CAN2;
 #define RLW_ID 0x3a0
 
 typedef enum { BOARD_FL, BOARD_FR, BOARD_RR, BOARD_RL } board_pos_t;
-#define BOARD_POSITION BOARD_RR
+#define BOARD_POSITION BOARD_FL
 
 #define CAN_DEBUG false
 
@@ -363,24 +363,37 @@ void app_main(void) {
     if (ret == ESP_OK) {
         can2_ok = (mcp_init(CAN2) == ESP_OK);
         if (!can2_ok) ESP_LOGE(TAG, "CAN2 unavailable");
-    } else {
-        ESP_LOGE(TAG, "SPI init failed (%s), CAN2 disabled", esp_err_to_name(ret));
-    }
+    } else ESP_LOGE(TAG, "SPI init failed (%s), CAN2 disabled", esp_err_to_name(ret));
 
     bool mlx_pix_ok = false;
     bool mlx_camera_ok = false;
     ret = initializeI2C();
+    // vTaskDelay(pdMS_TO_TICKS(100));
+
+    // for(uint16_t i = 0; i < 0x77; i++){
+    //     esp_err_t ret = i2c_master_probe(i2c_bus, i, 10);
+    //     if(ret == ESP_OK){
+    //         ESP_LOGI(TAG, "available i2c addr: %x", i);
+    //     }
+    // }
+
     if (ret == ESP_OK) {
-        ret = MLX90614_init(i2c_bus, &mlx_pix_dev, MLX90614_DEFAULT_ADDRESS, MLX90614_DEFAULT_SPEED);
+        i2c_device_config_t cfg = {
+            .dev_addr_length = I2C_ADDR_BIT_LEN_7,
+            .device_address = MLX90614_DEFAULT_ADDRESS,
+            .scl_speed_hz = MLX90614_DEFAULT_SPEED,
+        };
+        i2c_master_bus_add_device(i2c_bus, &cfg, &mlx_pix_dev);
+        uint64_t pix_id;
+        esp_err_t ret = MLX90614_GetID(mlx_pix_dev,MLX90614_DEFAULT_ADDRESS, &pix_id);
         mlx_pix_ok = (ret == ESP_OK);
         if (!mlx_pix_ok) ESP_LOGW(TAG, "MLX90614 unavailable (%s), amb temp disabled", esp_err_to_name(ret));
-
+        else ESP_LOGI("MLX PIX INIT","MLX90614 ID: %04X %04X %04X %04X", (uint16_t)(pix_id >> 48), (uint16_t)(pix_id >> 32), (uint16_t)(pix_id >> 16), (uint16_t)(pix_id));
+        
         ret = MLX90642_Initialize(i2c_bus, &mlx_camera_dev, data);
         mlx_camera_ok = (ret == ESP_OK);
         if (!mlx_camera_ok) ESP_LOGW(TAG, "MLX90642 unavailable (%s), img array disabled", esp_err_to_name(ret));
-    } else {
-        ESP_LOGW(TAG, "I2C init failed (%s), MLX sensors disabled", esp_err_to_name(ret));
-    }
+    } else ESP_LOGW(TAG, "I2C init failed (%s), MLX sensors disabled", esp_err_to_name(ret));
 
     xTaskCreate(can1_tx_task, "can1_tx_task", 4096, (void*)200, 9, NULL);
 
@@ -410,6 +423,7 @@ void app_main(void) {
     ESP_LOGI(TAG, "Everything initialized\n");
 
     for (;;) {
+        //ESP_LOGI(TAG, "AMB temp: %f\tOBJ temp: %f", g_amb_temp, g_obj_temp);
         vTaskDelay(pdMS_TO_TICKS(1000));
     }
 }

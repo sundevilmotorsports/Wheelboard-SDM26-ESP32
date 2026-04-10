@@ -1,4 +1,4 @@
-/* * Data converted from C:/Users/mmcco/OneDrive/Documents/GitHub/Wheelboard-SDM26-ESP32/build/esp-idf/mbedtls/x509_crt_bundle
+/* * Data converted from /Users/rahilshah/VSCode/SDM/Wheelboard-SDM26-ESP32/build/esp-idf/mbedtls/x509_crt_bundle
  */
 .data
 #if !defined (__APPLE__) && !defined (__linux__)

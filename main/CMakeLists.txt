@@ -1,6 +1,8 @@
 set(COMPONENT_SRCS
     "main.c"
     "mcp2518fd.c"
+    "wifi_ota.c"
+    "led_util.c"
 )
 
 set(COMPONENT_INCLUDES ".")
@@ -13,4 +15,5 @@ else()
 endif()
 
 idf_component_register(SRCS ${COMPONENT_SRCS}
-                       INCLUDE_DIRS ${COMPONENT_INCLUDES})
+                       INCLUDE_DIRS ${COMPONENT_INCLUDES}
+                       REQUIRES esp_wifi esp_http_server nvs_flash esp_event app_update esp_driver_twai driver esp_timer led_strip)

@@ -1,8 +1,8 @@
-# Install script for directory: C:/Users/mmcco/esp/v5.5.1/esp-idf/components/esp_system/port
+# Install script for directory: /Users/rahilshah/esp/v5.5.2/esp-idf/components/esp_system/port
 
 # Set the install prefix
 if(NOT DEFINED CMAKE_INSTALL_PREFIX)
-  set(CMAKE_INSTALL_PREFIX "C:/Program Files (x86)/Wheelboard-SDM26-ESP32")
+  set(CMAKE_INSTALL_PREFIX "/usr/local")
 endif()
 string(REGEX REPLACE "/$" "" CMAKE_INSTALL_PREFIX "${CMAKE_INSTALL_PREFIX}")
 
@@ -34,11 +34,17 @@ endif()
 
 # Set path to fallback-tool for dependency-resolution.
 if(NOT DEFINED CMAKE_OBJDUMP)
-  set(CMAKE_OBJDUMP "C:/Users/mmcco/.espressif/tools/xtensa-esp-elf/esp-14.2.0_20241119/xtensa-esp-elf/bin/xtensa-esp32s3-elf-objdump.exe")
+  set(CMAKE_OBJDUMP "/Users/rahilshah/.espressif/tools/xtensa-esp-elf/esp-14.2.0_20251107/xtensa-esp-elf/bin/xtensa-esp32s3-elf-objdump")
 endif()
 
 if(NOT CMAKE_INSTALL_LOCAL_ONLY)
   # Include the install script for the subdirectory.
-  include("C:/Users/mmcco/OneDrive/Documents/GitHub/Wheelboard-SDM26-ESP32/build/esp-idf/esp_system/port/soc/esp32s3/cmake_install.cmake")
+  include("/Users/rahilshah/VSCode/SDM/Wheelboard-SDM26-ESP32/build/esp-idf/esp_system/port/soc/esp32s3/cmake_install.cmake")
 endif()
 
+string(REPLACE ";" "\n" CMAKE_INSTALL_MANIFEST_CONTENT
+       "${CMAKE_INSTALL_MANIFEST_FILES}")
+if(CMAKE_INSTALL_LOCAL_ONLY)
+  file(WRITE "/Users/rahilshah/VSCode/SDM/Wheelboard-SDM26-ESP32/build/esp-idf/esp_system/port/install_local_manifest.txt"
+     "${CMAKE_INSTALL_MANIFEST_CONTENT}")
+endif()

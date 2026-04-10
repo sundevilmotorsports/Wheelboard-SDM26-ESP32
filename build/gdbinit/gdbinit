@@ -1,2 +1,2 @@
-source C:/Users/mmcco/OneDrive/Documents/GitHub/Wheelboard-SDM26-ESP32/build/gdbinit/symbols
-source C:/Users/mmcco/OneDrive/Documents/GitHub/Wheelboard-SDM26-ESP32/build/gdbinit/connect
+source /Users/rahilshah/VSCode/SDM/Wheelboard-SDM26-ESP32/build/gdbinit/symbols
+source /Users/rahilshah/VSCode/SDM/Wheelboard-SDM26-ESP32/build/gdbinit/connect

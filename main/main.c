@@ -60,7 +60,7 @@ spi_device_handle_t CAN2;
 #define RLW_ID 0x3a0
 
 typedef enum { BOARD_FL, BOARD_FR, BOARD_RR, BOARD_RL } board_pos_t;
-#define BOARD_POSITION BOARD_FL
+#define BOARD_POSITION BOARD_RR
 
 #define CAN_DEBUG false
 
@@ -80,6 +80,15 @@ static uint16_t data[MLX_TOTAL_PIXELS];
 static uint8_t tx_buffer[8];
 static uint8_t wt1_buffer[8];
 static uint8_t wt2_buffer[8]; 
+
+uint16_t tempC_to_u16(float tempC) {
+    float scaled = tempC * 100.0f;
+
+    if (scaled < 0.0f) return 0;
+    if (scaled > 65535.0f) return 65535;
+
+    return (uint16_t)(scaled + 0.5f);
+}
 
 esp_err_t initializeSPI() {
     // TODO: Interrupts
@@ -132,8 +141,8 @@ void sendCan1Message() {
     tx_buffer[0] = (g_wheel_speed >> 8) & 0xFF;
     tx_buffer[1] = g_wheel_speed & 0xFF;
 
-    uint16_t obj_temp = (uint16_t) g_obj_temp; 
-    uint16_t amb_temp = (uint16_t) g_amb_temp; 
+    uint16_t obj_temp = tempC_to_u16(g_obj_temp); 
+    uint16_t amb_temp = tempC_to_u16(g_amb_temp); 
 
     tx_buffer[2] = (obj_temp >> 8) & 0xFF;
     tx_buffer[3] = obj_temp & 0xFF;
@@ -241,10 +250,9 @@ static void he_task(void *arg) {
                 last_valid_time = current_time;
             }
 
-            vTaskDelay(pdMS_TO_TICKS(5));
+            // vTaskDelay(pdMS_TO_TICKS(5));
 
-            while (xQueueReceive(he_evt_queue, &io_num, 0)) {
-            }
+            // while (xQueueReceive(he_evt_queue, &io_num, 0)) {}
         } else if (last_valid_time > 0) {
             uint32_t current_time = esp_timer_get_time() / 1000;
             uint32_t elapsed_ms = current_time - last_valid_time;
